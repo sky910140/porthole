@@ -13,6 +13,8 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
+from .changes.content import QuotaExceeded, StorageUnavailable
+from .changes.store import IdempotencyConflict, RecordUnavailable
 from .protocol import service_info
 from .runtime_limits import BusyError
 
@@ -147,12 +149,30 @@ def create_app(runtime):
                 project_id = data.get("project_id", "")
                 runtime.workspace(project_id)
                 return JSONResponse(runtime.health.create_challenge(project_id))
+            elif path == "/api/changes" and request.method == "GET":
+                project_id = request.query_params.get("project_id")
+                if project_id is not None:
+                    runtime.workspace(project_id)
+                return JSONResponse({
+                    "changes": runtime.local_change_history(project_id),
+                })
+            elif path.endswith("/apply") and path.startswith("/api/changes/"):
+                result = runtime.get_change_service().apply_without_readiness(
+                    request.path_params["change_id"], await body(request),
+                )
+                return JSONResponse(result, status_code=409)
             return JSONResponse({"ok": True})
         except PermissionError:
             return JSONResponse({"error": "Path is not allowed"}, status_code=403)
+        except RecordUnavailable:
+            return JSONResponse({"error": "Change record unavailable"}, status_code=404)
+        except IdempotencyConflict:
+            return JSONResponse({"error": "Operation id was reused"}, status_code=409)
+        except QuotaExceeded:
+            return JSONResponse({"error": "Change storage quota exceeded"}, status_code=429)
         except (ValueError, TypeError, ValidationError, FileNotFoundError, UnicodeError):
             return JSONResponse({"error": "Invalid request, project or path"}, status_code=400)
-        except OSError:
+        except (OSError, StorageUnavailable):
             return JSONResponse({"error": "Local configuration or file unavailable"}, status_code=503)
 
     async def static(request):
@@ -169,6 +189,8 @@ def create_app(runtime):
         Route("/api/context", action, methods=["PUT"]),
         Route("/api/context/{session_id}", action, methods=["DELETE"]),
         Route("/api/verification-challenges", action, methods=["POST"]),
+        Route("/api/changes", action, methods=["GET"]),
+        Route("/api/changes/{change_id}/apply", action, methods=["POST"]),
         Route("/{name}", static)])
     app.add_middleware(LocalBoundary, token=runtime.settings.admin_token,
                        port=runtime.settings.admin_port)

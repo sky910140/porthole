@@ -5,6 +5,7 @@ from cryptography.fernet import Fernet
 from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 from fastmcp.server.auth.providers.github import GitHubProvider
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
+from fastmcp.server.dependencies import get_access_token
 from key_value.aio.stores.filetree import FileTreeStore, FileTreeV1KeySanitizationStrategy
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 
@@ -31,10 +32,25 @@ class OwnerGitHubProvider(GitHubProvider):
         if verified and str(verified.claims.get("sub", "")) in self.owner_ids:
             if self.health:
                 self.health.record("oauth", "ok")
-            return verified
+            return verified.model_copy(update={
+                "scopes": sorted({*verified.scopes, "project:read", "project:propose"}),
+            })
         if self.health:
             self.health.record("oauth", "failed", "AUTH_REQUIRED", retryable=True)
         return None
+
+
+def current_actor_id(required_scope: str) -> str:
+    """Derive the actor only from FastMCP's verified request context."""
+    token = get_access_token()
+    if token is None:
+        raise PermissionError("AUTH_REQUIRED: authenticated actor is required")
+    if required_scope not in set(token.scopes):
+        raise PermissionError("PROJECT_FORBIDDEN: authenticated actor lacks capability")
+    actor = str(token.claims.get("sub") or token.subject or token.client_id).strip()
+    if not actor or len(actor) > 200:
+        raise PermissionError("AUTH_REQUIRED: authenticated actor is invalid")
+    return actor
 
 
 def build_auth(settings, health=None):
@@ -42,7 +58,8 @@ def build_auth(settings, health=None):
         if len(settings.mcp_token) < 32:
             raise ValueError("Initialize local credentials before starting")
         return StaticTokenVerifier(tokens={settings.mcp_token: {
-            "client_id": "local-development", "scopes": ["project:read"]
+            "client_id": "local-development",
+            "scopes": ["project:read", "project:propose"],
         }})
     client_id = os.environ.get("PROJECT_MCP_GITHUB_CLIENT_ID", "")
     client_secret = os.environ.get("PROJECT_MCP_GITHUB_CLIENT_SECRET", "")

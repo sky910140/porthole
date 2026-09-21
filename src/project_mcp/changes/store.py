@@ -38,6 +38,38 @@ def _iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat()
 
 
+def read_local_history(
+    db_path: Path,
+    *,
+    project_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Read non-content metadata even when the protected content key is unavailable."""
+    if not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    path = Path(db_path)
+    if not path.is_file():
+        return []
+    query = "SELECT * FROM changes"
+    parameters: tuple = ()
+    if project_id is not None:
+        query += " WHERE project_id=?"
+        parameters = (project_id,)
+    query += " ORDER BY updated_at DESC LIMIT ?"
+    try:
+        with sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise StorageUnavailable("change database integrity check failed")
+            rows = connection.execute(query, (*parameters, limit)).fetchall()
+    except sqlite3.DatabaseError as exc:
+        raise StorageUnavailable("change history database is unavailable") from exc
+    return [{
+        **ChangeStore._result(row),
+        "project_id": row["project_id"],
+    } for row in rows]
+
+
 class ChangeStore:
     def __init__(
         self,
@@ -312,6 +344,18 @@ class ChangeStore:
     def count_changes(self) -> int:
         with self._connect() as connection:
             return connection.execute("SELECT COUNT(*) FROM changes").fetchone()[0]
+
+    def list_local(self, *, project_id: str | None = None, limit: int = 100) -> list[dict]:
+        return read_local_history(self.db_path, project_id=project_id, limit=limit)
+
+    def local_identity(self, change_id: str) -> dict[str, str]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT actor_id,project_id FROM changes WHERE change_id=?", (change_id,),
+            ).fetchone()
+        if row is None:
+            raise RecordUnavailable("RECORD_UNAVAILABLE: change record does not exist")
+        return dict(row)
 
     def start_transaction(
         self,

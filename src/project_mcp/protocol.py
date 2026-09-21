@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .changes.models import ChangeRequest, ChangeResult, FileChange
+
 PROTOCOL_VERSION = "1.0.0"
 SERVICE_VERSION = "0.2.0"
 CAPABILITIES = [
@@ -17,6 +19,8 @@ CAPABILITIES = [
     "project_policy",
     "batch_reads",
     "scope_preview",
+    "change_proposals",
+    "local_review_required",
 ]
 
 CheckState = Literal["unknown", "checking", "ok", "failed", "expired"]
@@ -102,5 +106,8 @@ def contract_document() -> dict:
             "ServiceInfo": ServiceInfo.model_json_schema(),
             "HealthCheck": HealthCheck.model_json_schema(),
             "ErrorDetail": ErrorDetail.model_json_schema(),
+            "FileChange": FileChange.model_json_schema(),
+            "ChangeRequest": ChangeRequest.model_json_schema(),
+            "ChangeResult": ChangeResult.model_json_schema(),
         },
     }

@@ -63,6 +63,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 | list_editor_sessions | 已发布且未过期的编辑器会话 |
 | get_editor_context | 指定会话的文本、选区及诊断 |
 | verify_connection | 用本机生成的限时挑战执行一次真实读取，确认网页工具链可用 |
+| propose_changes | 在“允许提出修改”模式下创建待本机审阅的修改单，不改文件 |
+| get_change_status | 按修改编号查询状态、revision 和文件摘要 |
+| get_change_diff | 查看受大小限制的保存内容与提案内容差异 |
 
 读取结果有大小、时间和数量限制。`has_more` 与 `next_offset` 表示可以继续翻页；`truncation_reason=scan_limit` 表示扫描预算耗尽，应缩小目录，不能视为已扫描完整项目。非 UTF-8 文件和二进制文件不提供文本读取。代码片段通过 MCP 返回后会被对应 AI 服务处理，不是完全本地推理。
 
@@ -110,4 +113,4 @@ Python 测试覆盖真实文件/Git、越界与秘密过滤、认证、MCP 客�
 
 依赖：Windows Python 锁文件为 `requirements-windows.lock`；两套 Node 工程均有 `package-lock.json`。不要在 macOS/Linux 上直接使用包含 Windows 专属依赖的锁文件；跨系统安装尚未验收。
 
-源码尚未发布到插件市场或任何公网服务。JetBrains 等其他 IDE 插件、补丁应用及任务执行属于后续功能。
+源码尚未发布到插件市场或任何公网服务。修改单可以远程提交和查询，但本机应用仍由编辑器就绪检查阻止，需完成 VS Code 差异审阅与短期租约后才会开放。JetBrains 等其他 IDE 插件和任务执行属于后续功能。

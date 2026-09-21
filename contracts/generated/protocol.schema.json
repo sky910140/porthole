@@ -1,6 +1,155 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "models": {
+    "ChangeRequest": {
+      "$defs": {
+        "FileChange": {
+          "additionalProperties": false,
+          "properties": {
+            "base_sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Base Sha256"
+            },
+            "content_utf8": {
+              "title": "Content Utf8",
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "create",
+                "modify"
+              ],
+              "title": "Operation",
+              "type": "string"
+            },
+            "path": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "operation",
+            "content_utf8"
+          ],
+          "title": "FileChange",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileChange"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Files",
+          "type": "array"
+        },
+        "project_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "request_id",
+        "summary",
+        "files"
+      ],
+      "title": "ChangeRequest",
+      "type": "object"
+    },
+    "ChangeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "blocked_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blocked Reason"
+        },
+        "change_id": {
+          "title": "Change Id",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "manifest_sha256": {
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "pending_review",
+            "rejected",
+            "expired",
+            "conflict",
+            "applying",
+            "applied",
+            "rolled_back",
+            "recovery_required",
+            "reverting",
+            "reverted"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "change_id",
+        "state",
+        "manifest_sha256",
+        "revision"
+      ],
+      "title": "ChangeResult",
+      "type": "object"
+    },
     "ErrorDetail": {
       "$defs": {
         "ErrorCode": {
@@ -54,6 +203,48 @@
         "request_id"
       ],
       "title": "ErrorDetail",
+      "type": "object"
+    },
+    "FileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "base_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Sha256"
+        },
+        "content_utf8": {
+          "title": "Content Utf8",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "create",
+            "modify"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "operation",
+        "content_utf8"
+      ],
+      "title": "FileChange",
       "type": "object"
     },
     "HealthCheck": {
