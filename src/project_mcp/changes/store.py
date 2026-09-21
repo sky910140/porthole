@@ -112,6 +112,30 @@ class ChangeStore:
                         result_json TEXT,
                         created_at TEXT NOT NULL
                     );
+                    CREATE TABLE IF NOT EXISTS transactions (
+                        change_id TEXT NOT NULL REFERENCES changes(change_id) ON DELETE CASCADE,
+                        kind TEXT NOT NULL,
+                        phase TEXT NOT NULL,
+                        started_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY(change_id, kind)
+                    );
+                    CREATE TABLE IF NOT EXISTS transaction_files (
+                        change_id TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        path TEXT NOT NULL,
+                        operation TEXT NOT NULL,
+                        before_sha256 TEXT,
+                        after_sha256 TEXT NOT NULL,
+                        backup_blob_id TEXT,
+                        content_blob_id TEXT,
+                        original_mode INTEGER,
+                        phase TEXT NOT NULL,
+                        PRIMARY KEY(change_id, kind, ordinal),
+                        FOREIGN KEY(change_id, kind)
+                            REFERENCES transactions(change_id, kind) ON DELETE CASCADE
+                    );
                 """)
         except StorageUnavailable:
             raise
@@ -229,6 +253,12 @@ class ChangeStore:
     def get(self, actor_id: str, project_id: str, change_id: str) -> dict:
         return self._result(self._row(actor_id, project_id, change_id))
 
+    def transaction_kind(self, actor_id: str, project_id: str, change_id: str) -> str:
+        row = self._row(actor_id, project_id, change_id)
+        if row["transaction_kind"] not in {"apply", "revert"}:
+            raise RecordUnavailable("transaction kind is unavailable")
+        return row["transaction_kind"]
+
     def files(self, actor_id: str, project_id: str, change_id: str) -> list[dict]:
         row = self._row(actor_id, project_id, change_id)
         with self._connect() as connection:
@@ -283,11 +313,118 @@ class ChangeStore:
         with self._connect() as connection:
             return connection.execute("SELECT COUNT(*) FROM changes").fetchone()[0]
 
+    def start_transaction(
+        self,
+        actor_id: str,
+        project_id: str,
+        change_id: str,
+        *,
+        expected_revision: int,
+        expected_state: ChangeState,
+        kind: str,
+        files: list[dict],
+        now: datetime | None = None,
+    ) -> dict:
+        if kind not in {"apply", "revert"}:
+            raise ValueError("invalid transaction kind")
+        next_state = "applying" if kind == "apply" else "reverting"
+        timestamp = _iso(now or datetime.now(UTC))
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM changes WHERE actor_id=? AND project_id=? AND change_id=?",
+                (self._actor(actor_id), project_id, change_id),
+            ).fetchone()
+            if (
+                row is None or row["revision"] != expected_revision
+                or row["state"] != expected_state
+            ):
+                connection.rollback()
+                raise InvalidTransition("revision or state changed")
+            blocked = connection.execute(
+                """SELECT 1 FROM changes WHERE project_id=? AND state='recovery_required'
+                   AND change_id<>? LIMIT 1""",
+                (project_id, change_id),
+            ).fetchone()
+            if blocked:
+                connection.rollback()
+                raise InvalidTransition("RECOVERY_REQUIRED: project has an unresolved transaction")
+            connection.execute(
+                """UPDATE changes SET state=?,revision=revision+1,transaction_kind=?,
+                   blocked_reason=NULL,error_code=NULL,updated_at=? WHERE change_id=?""",
+                (next_state, kind, timestamp, change_id),
+            )
+            connection.execute(
+                "INSERT INTO transactions VALUES (?,?,?,?,?)",
+                (change_id, kind, "active", timestamp, timestamp),
+            )
+            connection.executemany(
+                """INSERT INTO transaction_files (
+                    change_id,kind,ordinal,path,operation,before_sha256,after_sha256,
+                    backup_blob_id,content_blob_id,original_mode,phase
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                [(
+                    change_id, kind, index, item["path"], item["operation"],
+                    item.get("before_sha256"), item["after_sha256"],
+                    item.get("backup_blob_id"), item["content_blob_id"],
+                    item.get("original_mode"), "prepared",
+                ) for index, item in enumerate(files)],
+            )
+            connection.commit()
+            updated = connection.execute(
+                "SELECT * FROM changes WHERE change_id=?", (change_id,)
+            ).fetchone()
+            return self._result(updated)
+
+    def transaction(self, change_id: str, kind: str) -> dict:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM transactions WHERE change_id=? AND kind=?",
+                (change_id, kind),
+            ).fetchone()
+            if row is None:
+                raise RecordUnavailable("transaction record is unavailable")
+            files = connection.execute(
+                """SELECT ordinal,path,operation,before_sha256,after_sha256,backup_blob_id,
+                          content_blob_id,original_mode,phase
+                   FROM transaction_files WHERE change_id=? AND kind=? ORDER BY ordinal""",
+                (change_id, kind),
+            ).fetchall()
+        return {**dict(row), "files": [dict(item) for item in files]}
+
+    def set_transaction_file_phase(
+        self, change_id: str, kind: str, ordinal: int, phase: str,
+    ) -> None:
+        with self._lock, self._connect() as connection:
+            if connection.execute(
+                """UPDATE transaction_files SET phase=?
+                   WHERE change_id=? AND kind=? AND ordinal=?""",
+                (phase, change_id, kind, ordinal),
+            ).rowcount != 1:
+                raise RecordUnavailable("transaction file record is unavailable")
+            connection.execute(
+                "UPDATE transactions SET updated_at=? WHERE change_id=? AND kind=?",
+                (_iso(datetime.now(UTC)), change_id, kind),
+            )
+
+    def set_transaction_phase(self, change_id: str, kind: str, phase: str) -> None:
+        with self._lock, self._connect() as connection:
+            if connection.execute(
+                """UPDATE transactions SET phase=?,updated_at=?
+                   WHERE change_id=? AND kind=?""",
+                (phase, _iso(datetime.now(UTC)), change_id, kind),
+            ).rowcount != 1:
+                raise RecordUnavailable("transaction record is unavailable")
+
     def _referenced(self) -> set[str]:
         with self._connect() as connection:
             return {
                 row[0] for row in connection.execute(
-                    "SELECT DISTINCT content_blob_id FROM change_files WHERE content_blob_id IS NOT NULL"
+                    """SELECT content_blob_id FROM change_files WHERE content_blob_id IS NOT NULL
+                       UNION SELECT content_blob_id FROM transaction_files
+                             WHERE content_blob_id IS NOT NULL
+                       UNION SELECT backup_blob_id FROM transaction_files
+                             WHERE backup_blob_id IS NOT NULL"""
                 )
             }
 
@@ -321,17 +458,35 @@ class ChangeStore:
                 (now_text, now_text),
             ).rowcount
             placeholders = ",".join("?" for _ in TERMINAL_WITH_CONTENT_EXPIRY)
+            expiry_parameters = (*sorted(TERMINAL_WITH_CONTENT_EXPIRY), content_cutoff)
             rows = connection.execute(
-                f"""SELECT f.content_blob_id FROM change_files f JOIN changes c USING(change_id)
+                f"""SELECT f.content_blob_id AS blob_id
+                    FROM change_files f JOIN changes c USING(change_id)
                     WHERE f.content_blob_id IS NOT NULL AND c.state IN ({placeholders})
+                    AND c.updated_at<?
+                    UNION SELECT t.content_blob_id
+                    FROM transaction_files t JOIN changes c USING(change_id)
+                    WHERE t.content_blob_id IS NOT NULL AND c.state IN ({placeholders})
+                    AND c.updated_at<?
+                    UNION SELECT t.backup_blob_id
+                    FROM transaction_files t JOIN changes c USING(change_id)
+                    WHERE t.backup_blob_id IS NOT NULL AND c.state IN ({placeholders})
                     AND c.updated_at<?""",
-                (*sorted(TERMINAL_WITH_CONTENT_EXPIRY), content_cutoff),
+                (*expiry_parameters, *expiry_parameters, *expiry_parameters),
             ).fetchall()
             released = [row[0] for row in rows]
             connection.execute(
                 f"""UPDATE change_files SET content_blob_id=NULL WHERE change_id IN (
                     SELECT change_id FROM changes WHERE state IN ({placeholders}) AND updated_at<?
                 )""",
+                (*sorted(TERMINAL_WITH_CONTENT_EXPIRY), content_cutoff),
+            )
+            connection.execute(
+                f"""UPDATE transaction_files SET content_blob_id=NULL,backup_blob_id=NULL
+                    WHERE change_id IN (
+                        SELECT change_id FROM changes WHERE state IN ({placeholders})
+                        AND updated_at<?
+                    )""",
                 (*sorted(TERMINAL_WITH_CONTENT_EXPIRY), content_cutoff),
             )
             deleted = connection.execute(
