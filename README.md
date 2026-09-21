@@ -31,7 +31,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 ## VS Code 扩展
 
-在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.1.0.vsix`。
+在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.2.0.vsix`。
 
 1. 打开已登记的项目目录。
 2. 执行 `AI Zhagan: 配置连接`，输入本机管理令牌并选择对应项目。
@@ -54,8 +54,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 | git_status / git_diff | 允许路径内的保存后变更 |
 | list_editor_sessions | 已发布且未过期的编辑器会话 |
 | get_editor_context | 指定会话的文本、选区及诊断 |
+| verify_connection | 用本机生成的限时挑战执行一次真实读取，确认网页工具链可用 |
 
 读取结果有大小、时间和数量限制，`truncated` 表示不完整，应缩小查询范围。非 UTF-8 文件和二进制文件不提供文本读取。代码片段通过 MCP 返回后会被对应 AI 服务处理，不是完全本地推理。
+
+管理页和 `project-assistant doctor` 分开显示本机服务、公网通道、OAuth 和真实工具调用四层状态。启动成功只代表本机服务可用；只有本机生成挑战后，由已认证 AI 客户端调用 `verify_connection` 并完成项目读取，真实工具调用层才会显示正常。状态会过期，不能用历史成功代替当前连接。
 
 ## 本地 MCP 客户端
 

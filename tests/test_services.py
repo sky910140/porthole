@@ -98,10 +98,17 @@ async def test_github_authorization_rejects_valid_but_non_owner_token(monkeypatc
     from fastmcp.server.auth.providers.github import GitHubProvider
 
     from project_mcp.auth import OwnerGitHubProvider
+    from project_mcp.health import HealthRegistry
     async def upstream(self, token):
         return AccessToken(token=token, client_id="test", scopes=[], claims={"sub":token})
     monkeypatch.setattr(GitHubProvider, "load_access_token", upstream)
-    provider = OwnerGitHubProvider(owner_ids=["123"], client_id="test", client_secret="x" * 40,
+    health = HealthRegistry()
+    health.record("local_service", "ok")
+    provider = OwnerGitHubProvider(owner_ids=["123"], health=health,
+                                   client_id="test", client_secret="x" * 40,
                                    base_url="https://mcp.example.com")
     assert await provider.load_access_token("456") is None
+    assert health.snapshot()["oauth"]["state"] == "failed"
+    assert health.snapshot()["local_service"]["state"] == "ok"
     assert (await provider.load_access_token("123")).claims["sub"] == "123"
+    assert health.snapshot()["oauth"]["state"] == "ok"

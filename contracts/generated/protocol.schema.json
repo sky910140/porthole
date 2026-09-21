@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "models": {
+    "ErrorDetail": {
+      "$defs": {
+        "ErrorCode": {
+          "enum": [
+            "AUTH_REQUIRED",
+            "PROJECT_FORBIDDEN",
+            "PATH_FORBIDDEN",
+            "RATE_LIMITED",
+            "SCAN_LIMIT",
+            "FILE_TOO_LARGE",
+            "FILE_CHANGED",
+            "EDITOR_DIRTY",
+            "EDITOR_UNAVAILABLE",
+            "LEASE_EXPIRED",
+            "IDEMPOTENCY_CONFLICT",
+            "RECOVERY_REQUIRED",
+            "VERSION_INCOMPATIBLE",
+            "QUOTA_EXCEEDED",
+            "STORAGE_UNAVAILABLE",
+            "RECORD_UNAVAILABLE"
+          ],
+          "title": "ErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "maxLength": 500,
+          "title": "Message",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "request_id"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
+    "HealthCheck": {
+      "$defs": {
+        "ErrorCode": {
+          "enum": [
+            "AUTH_REQUIRED",
+            "PROJECT_FORBIDDEN",
+            "PATH_FORBIDDEN",
+            "RATE_LIMITED",
+            "SCAN_LIMIT",
+            "FILE_TOO_LARGE",
+            "FILE_CHANGED",
+            "EDITOR_DIRTY",
+            "EDITOR_UNAVAILABLE",
+            "LEASE_EXPIRED",
+            "IDEMPOTENCY_CONFLICT",
+            "RECOVERY_REQUIRED",
+            "VERSION_INCOMPATIBLE",
+            "QUOTA_EXCEEDED",
+            "STORAGE_UNAVAILABLE",
+            "RECORD_UNAVAILABLE"
+          ],
+          "title": "ErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "checked_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checked At"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "state": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "checking",
+            "ok",
+            "failed",
+            "expired"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "title": "HealthCheck",
+      "type": "object"
+    },
+    "ServiceInfo": {
+      "additionalProperties": true,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "protocol_version": {
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "service_version": {
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "title": "Service Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "service_version",
+        "capabilities"
+      ],
+      "title": "ServiceInfo",
+      "type": "object"
+    }
+  },
+  "protocol_version": "1.0.0"
+}

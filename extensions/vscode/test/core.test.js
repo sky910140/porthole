@@ -81,7 +81,7 @@ test('uses bearer authorization for status, context upload and deletion', async 
     request.on('end', () => {
       requests.push({ method: request.method, url: request.url, authorization: request.headers.authorization, body });
       response.setHeader('content-type', 'application/json');
-      if (request.url === '/api/status') response.end(JSON.stringify({ projects: [{ id: 'p1', name: 'One' }], sessions: [] }));
+      if (request.url === '/api/status') response.end(JSON.stringify({ protocol_version: '1.0.0', service_version: '0.2.0', capabilities: [], projects: [{ id: 'p1', name: 'One' }], sessions: [] }));
       else { response.statusCode = 204; response.end(); }
     });
   });

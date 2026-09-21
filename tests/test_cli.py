@@ -30,7 +30,13 @@ def test_init_preserves_existing_config_and_doctor(tmp_path):
     assert config.read_bytes() == before
     result = invoke("doctor", "--config", config)
     assert result.returncode == 0, result.stderr
-    assert "local" in result.stdout
+    report = json.loads(result.stdout)
+    assert report["mode"] == "local"
+    assert set(report["health"]) == {"local_service", "transport", "oauth", "tool_call"}
+    assert report["health"]["local_service"]["state"] == "failed"
+    assert report["fixes"]["tool_call"].startswith("Create a verification challenge")
+    tokens = json.loads((tmp_path / ".local" / "tokens.json").read_text())
+    assert all(secret not in result.stdout for secret in tokens.values())
 
 
 def test_start_http_mcp_status_and_stop_only_owned_server(tmp_path):

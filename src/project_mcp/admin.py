@@ -13,6 +13,9 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
+from .protocol import service_info
+from .runtime_limits import BusyError
+
 STATIC = Path(__file__).parent / "static"
 
 
@@ -64,19 +67,41 @@ async def body(request):
 
 def create_app(runtime):
     async def health(request):
-        return JSONResponse({"service": "project-mcp-assistant", "status": "ok"})
+        try:
+            async with runtime.limits.status.slot():
+                runtime.health.record("local_service", "ok")
+                return JSONResponse({
+                    "service": "ai-zhagan",
+                    "status": "ok",
+                    **service_info().model_dump(mode="json"),
+                    "health": runtime.health.snapshot(),
+                })
+        except BusyError:
+            return JSONResponse({"error": "Status service is busy"}, status_code=429)
 
     async def status(request):
-        s = runtime.settings
-        projects = [{"id": p.id, "name": p.name or p.id, "root": str(p.root)}
-                    for p in s.projects]
-        return JSONResponse({"projects": projects, "sessions": runtime.contexts.list(),
-                             "config_id": runtime.config_id,
-                             "auth_mode": s.auth_mode, "mcp_port": s.mcp_port,
-                             "public_url": s.public_url,
-                             "oauth_configured": s.auth_mode == "github",
-                             "cloud_account_verified": False,
-                             "read_only": True})
+        try:
+            async with runtime.limits.status.slot():
+                runtime.health.record("local_service", "ok")
+                s = runtime.settings
+                projects = [{"id": p.id, "name": p.name or p.id, "root": str(p.root)}
+                            for p in s.projects]
+                health_state = runtime.health.snapshot()
+                return JSONResponse({
+                    **service_info().model_dump(mode="json"),
+                    "projects": projects,
+                    "sessions": runtime.contexts.list(),
+                    "config_id": runtime.config_id,
+                    "auth_mode": s.auth_mode,
+                    "mcp_port": s.mcp_port,
+                    "public_url": s.public_url,
+                    "oauth_configured": s.auth_mode == "github",
+                    "cloud_account_verified": health_state["oauth"]["state"] == "ok",
+                    "read_only": True,
+                    "health": health_state,
+                })
+        except BusyError:
+            return JSONResponse({"error": "Status service is busy"}, status_code=429)
 
     async def action(request: Request):
         try:
@@ -93,6 +118,11 @@ def create_app(runtime):
                 return JSONResponse(runtime.contexts.put(workspace, data))
             elif path.startswith("/api/context/") and request.method == "DELETE":
                 runtime.contexts.delete(request.path_params["session_id"])
+            elif path == "/api/verification-challenges" and request.method == "POST":
+                data = await body(request)
+                project_id = data.get("project_id", "")
+                runtime.workspace(project_id)
+                return JSONResponse(runtime.health.create_challenge(project_id))
             return JSONResponse({"ok": True})
         except PermissionError:
             return JSONResponse({"error": "Path is not allowed"}, status_code=403)
@@ -113,6 +143,7 @@ def create_app(runtime):
         Route("/api/projects/{project_id}", action, methods=["DELETE"]),
         Route("/api/context", action, methods=["PUT"]),
         Route("/api/context/{session_id}", action, methods=["DELETE"]),
+        Route("/api/verification-challenges", action, methods=["POST"]),
         Route("/{name}", static)])
     app.add_middleware(LocalBoundary, token=runtime.settings.admin_token,
                        port=runtime.settings.admin_port)

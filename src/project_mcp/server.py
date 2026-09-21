@@ -13,6 +13,8 @@ from fastmcp.exceptions import ToolError
 from .auth import build_auth
 from .config import Project, Settings, save_config
 from .context import ContextStore
+from .health import HealthRegistry
+from .runtime_limits import BusyError, RuntimeLimits
 from .workspace import Workspace
 
 
@@ -21,6 +23,8 @@ class Runtime:
         self.settings = settings
         self.config_path = config_path
         self.contexts = ContextStore()
+        self.health = HealthRegistry()
+        self.limits = RuntimeLimits()
         self.stop_requested = asyncio.Event()
         self.config_id = hashlib.sha256(str(config_path.resolve() if config_path else "memory").encode()).hexdigest()
         self.excluded_paths = [p for p in (settings.state_dir, config_path) if p is not None]
@@ -62,7 +66,7 @@ class Runtime:
 
 def create_mcp(runtime: Runtime) -> FastMCP:
     mcp = FastMCP(
-        "Local Project", auth=build_auth(runtime.settings), mask_error_details=True,
+        "Local Project", auth=build_auth(runtime.settings, runtime.health), mask_error_details=True,
         instructions=("Read-only local project tools. Always bind an explicit project_id. "
                       "File tools read saved disk contents, not editor buffers. Use list_editor_sessions "
                       "and an explicit session_id to read a published editor snapshot. "
@@ -75,8 +79,11 @@ def create_mcp(runtime: Runtime) -> FastMCP:
     async def invoke(project_id, name, **kwargs):
         try:
             workspace = runtime.workspace(project_id)
-            return await anyio.to_thread.run_sync(
-                partial(getattr(workspace, name), **kwargs), limiter=limiter)
+            async with runtime.limits.read.slot():
+                return await anyio.to_thread.run_sync(
+                    partial(getattr(workspace, name), **kwargs), limiter=limiter)
+        except BusyError as exc:
+            raise ToolError(str(exc)) from None
         except (ValueError, PermissionError, FileNotFoundError) as exc:
             raise ToolError(str(exc)) from None
 
@@ -132,6 +139,36 @@ def create_mcp(runtime: Runtime) -> FastMCP:
             return snapshot
         except (ValueError, PermissionError, FileNotFoundError) as exc:
             raise ToolError(str(exc)) from None
+
+    @mcp.tool(annotations=annotation)
+    async def verify_connection(project_id: str, challenge_id: str) -> dict:
+        """Complete an explicit local verification challenge with a real bounded project read."""
+        runtime.health.record("transport", "ok")
+        try:
+            result = await invoke(
+                project_id,
+                "list_files",
+                path=".",
+                depth=1,
+                limit=1,
+                offset=0,
+            )
+        except ToolError:
+            runtime.health.complete_challenge(
+                challenge_id,
+                project_id,
+                "verify_connection",
+                read_succeeded=False,
+            )
+            raise
+        if not runtime.health.complete_challenge(
+            challenge_id,
+            project_id,
+            "verify_connection",
+            read_succeeded=True,
+        ):
+            raise ToolError("LEASE_EXPIRED: verification challenge is invalid or expired")
+        return {"verified": True, "project_id": project_id, "read": result}
 
     return mcp
 

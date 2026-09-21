@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { validateServiceInfo } = require('./protocol');
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTICS = 100;
@@ -106,7 +107,7 @@ class ContextClient {
     try { return JSON.parse(responseText); } catch { throw new Error('本机服务返回了无效 JSON。'); }
   }
 
-  getStatus() { return this.request('GET', '/api/status'); }
+  async getStatus() { return validateServiceInfo(await this.request('GET', '/api/status')); }
   putContext(payload) { return this.request('PUT', '/api/context', payload); }
   deleteContext(sessionId) { return this.request('DELETE', `/api/context/${encodeURIComponent(sessionId)}`); }
 }

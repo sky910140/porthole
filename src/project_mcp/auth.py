@@ -19,20 +19,25 @@ def encrypted_store(directory, secret):
 
 
 class OwnerGitHubProvider(GitHubProvider):
-    def __init__(self, *, owner_ids: list[str], **kwargs):
+    def __init__(self, *, owner_ids: list[str], health=None, **kwargs):
         if not owner_ids:
             raise ValueError("At least one GitHub owner ID is required")
         self.owner_ids = frozenset(owner_ids)
+        self.health = health
         super().__init__(**kwargs)
 
     async def load_access_token(self, token):
         verified = await super().load_access_token(token)
         if verified and str(verified.claims.get("sub", "")) in self.owner_ids:
+            if self.health:
+                self.health.record("oauth", "ok")
             return verified
+        if self.health:
+            self.health.record("oauth", "failed", "AUTH_REQUIRED", retryable=True)
         return None
 
 
-def build_auth(settings):
+def build_auth(settings, health=None):
     if settings.auth_mode == "local":
         if len(settings.mcp_token) < 32:
             raise ValueError("Initialize local credentials before starting")
@@ -44,7 +49,8 @@ def build_auth(settings):
     if not client_id or not client_secret:
         raise ValueError("Set PROJECT_MCP_GITHUB_CLIENT_ID and PROJECT_MCP_GITHUB_CLIENT_SECRET")
     return OwnerGitHubProvider(
-        owner_ids=settings.github_user_ids, client_id=client_id, client_secret=client_secret,
+        owner_ids=settings.github_user_ids, health=health,
+        client_id=client_id, client_secret=client_secret,
         base_url=settings.public_url, required_scopes=["read:user"],
         client_storage=encrypted_store(settings.state_dir / "oauth", client_secret),
         require_authorization_consent=True,

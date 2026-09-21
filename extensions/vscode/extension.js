@@ -254,17 +254,19 @@ async function clearAllBindings() {
 async function disconnect() {
   const binding = activeBinding(true);
   if (!binding) return;
+  let cleanupError;
   try {
     await withBindingLock(binding.folder, async (key) => {
-      await clearKeyContents(key);
+      try { await clearKeyContents(key); } catch (error) { cleanupError = error; }
       await extensionContext.secrets.delete(tokenKey(binding.folder));
       await Promise.all([
         binding.config.update('projectId', undefined, vscode.ConfigurationTarget.WorkspaceFolder),
         binding.config.update('serviceUrl', undefined, vscode.ConfigurationTarget.WorkspaceFolder),
       ]);
-      await clearKeyContents(key);
+      try { await clearKeyContents(key); } catch (error) { cleanupError ||= error; }
     });
   } catch (error) { vscode.window.showWarningMessage(`服务端上下文清理失败：${error.message}`); }
+  if (cleanupError) vscode.window.showWarningMessage(`服务端上下文清理失败：${cleanupError.message}`);
   setStatus('已断开', '点击配置工作区连接', 'aiZhagan.configure');
 }
 

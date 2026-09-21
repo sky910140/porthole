@@ -148,11 +148,31 @@ def main(argv=None):
             return 0 if result else 1
         elif args.command == "doctor":
             from .auth import build_auth
+            from .health import HealthRegistry
             build_auth(settings)
-            print(json.dumps({"mode": settings.auth_mode, "projects": [p.id for p in settings.projects],
-                "git_available": bool(shutil.which("git")), "cloudflared_available": bool(shutil.which("cloudflared")),
-                "running": bool(status(settings, path)),
-                "cloud_account_acceptance": "not_verified"}, indent=2))
+            live = status(settings, path)
+            if live:
+                health = live.get("health", HealthRegistry().snapshot())
+            else:
+                registry = HealthRegistry()
+                registry.record("local_service", "failed", "STORAGE_UNAVAILABLE", retryable=True)
+                health = registry.snapshot()
+            fixes = {
+                "local_service": "Run project-assistant start and inspect the local log if it fails.",
+                "transport": "Check the HTTPS endpoint or tunnel, then retry verification.",
+                "oauth": "Reconnect the MCP integration with the authorized account.",
+                "tool_call": "Create a verification challenge and call verify_connection from the AI client.",
+            }
+            print(json.dumps({
+                "mode": settings.auth_mode,
+                "projects": [p.id for p in settings.projects],
+                "git_available": bool(shutil.which("git")),
+                "cloudflared_available": bool(shutil.which("cloudflared")),
+                "running": bool(live),
+                "health": health,
+                "fixes": {layer: fixes[layer] for layer, check in health.items()
+                          if check["state"] != "ok"},
+            }, indent=2))
         elif args.command == "token":
             # Only this explicit user-facing command prints credentials; never include in status/logs.
             print(settings.admin_token if args.kind == "admin" else settings.mcp_token)

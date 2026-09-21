@@ -33,7 +33,7 @@
 
 所有请求包含 `Authorization: Bearer <token>`。
 
-- `GET /api/status`：返回 `{ "projects": [{ "id": "...", "name": "...", "root": "D:\\\\project" }], "sessions": [] }`。`root` 仅用于本机管理接口的工作区绑定检查。
+- `GET /api/status`：返回协议版本、服务版本、能力、分层健康状态、`projects` 和 `sessions`。`projects[].root` 仅用于本机管理接口的工作区绑定检查。扩展接受同一主版本新增字段，拒绝缺字段或不兼容主版本。
 - `PUT /api/context`：发送：
 
 ```json

@@ -1,0 +1,22 @@
+{
+  "compatible": {
+    "protocol_version": "1.0.0",
+    "service_version": "0.2.0",
+    "capabilities": ["layered_health"]
+  },
+  "compatible_with_unknown": {
+    "protocol_version": "1.9.0",
+    "service_version": "0.9.0",
+    "capabilities": ["layered_health", "future_capability"],
+    "future_field": {"accepted": true}
+  },
+  "incompatible_major": {
+    "protocol_version": "2.0.0",
+    "service_version": "2.0.0",
+    "capabilities": []
+  },
+  "missing_required": {
+    "service_version": "0.2.0",
+    "capabilities": []
+  }
+}

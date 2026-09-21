@@ -32,6 +32,8 @@ function freePort() { return new Promise(resolve => {const s=net.createServer();
     await page.getByRole('button',{name:'连接', exact:true}).click();
     await page.getByText('本机已连接',{exact:true}).waitFor();
     await page.getByText('browser-test · browser-test',{exact:true}).waitFor();
+    await page.getByText('本机服务：正常',{exact:true}).waitFor();
+    await page.getByText('真实工具调用：尚未验证',{exact:true}).waitFor();
     assert.equal(await page.evaluate(()=>localStorage.length),0);
     assert.equal(await page.getByLabel('本机访问令牌',{exact:true}).inputValue(),'');
     await page.getByText('添加项目',{exact:true}).click();

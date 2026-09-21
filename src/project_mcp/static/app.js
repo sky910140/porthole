@@ -16,6 +16,12 @@ function item(text, action, label) {
   if (action) { const button = document.createElement('button'); button.className = 'secondary'; button.textContent = label; button.onclick = () => run(button, action); li.append(button); }
   return li;
 }
+const healthLabels = {
+  local_service: '本机服务', transport: '公网通道', oauth: '账号授权', tool_call: '真实工具调用',
+};
+const stateLabels = {
+  unknown: '尚未验证', checking: '验证中', ok: '正常', failed: '失败', expired: '结果已过期',
+};
 async function refresh() {
   const state = await api('/api/status');
   el('workspace').hidden = false; el('connection').textContent = '本机已连接';
@@ -30,6 +36,8 @@ async function refresh() {
   if (!state.sessions.length) el('sessions').append(item('暂无上下文。请在编辑器插件中发布当前文件。'));
   el('mode').textContent = state.auth_mode === 'local' ? '本地模式 · 网页账号连接尚未配置' : 'OAuth 模式 · 请在官方网页完成连接验收';
   el('endpoint').textContent = `MCP 地址：${state.public_url || `http://127.0.0.1:${state.mcp_port}`}/mcp`;
+  el('health').replaceChildren(...Object.entries(state.health || {}).map(([layer, check]) =>
+    item(`${healthLabels[layer] || layer}：${stateLabels[check.state] || check.state}${check.error_code ? ` · ${check.error_code}` : ''}`)));
 }
 async function run(button, operation) {
   button.disabled = true;

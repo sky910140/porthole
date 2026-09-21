@@ -38,7 +38,10 @@ async function run() {
           gate.seen.resolve();
           await gate.release.promise;
         }
-        return response.end(JSON.stringify({ projects, sessions: [...serverSessions.keys()] }));
+        return response.end(JSON.stringify({
+          protocol_version: '1.0.0', service_version: '0.2.0', capabilities: [],
+          projects, sessions: [...serverSessions.keys()],
+        }));
       }
       if (request.method === 'PUT' && request.url === '/api/context') {
         if (delayedPut) {
