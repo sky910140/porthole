@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            extensions/vscode/package-lock.json
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements-windows.lock
+          .\.venv\Scripts\python.exe -m pip install -e . --no-deps
+      - name: Install Node dependencies
+        run: |
+          npm ci
+          npm --prefix extensions/vscode ci
+      - name: Python and extension checks
+        run: powershell -NoProfile -File .\scripts\self-test.ps1
+      - name: Architecture boundary
+        run: .\.venv\Scripts\python.exe scripts\check_architecture.py
+      - name: Build and inspect release contents
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
+          npm --prefix extensions/vscode run package
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          $vsix = Get-ChildItem extensions\vscode\*.vsix | Select-Object -First 1
+          .\.venv\Scripts\python.exe scripts\check_release_contents.py $wheel.FullName
+          .\.venv\Scripts\python.exe scripts\check_release_contents.py $vsix.FullName

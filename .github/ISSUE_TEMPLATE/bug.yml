@@ -1,0 +1,35 @@
+name: Bug 报告
+description: 报告可复现的问题；请勿提交令牌或源代码
+title: "[Bug] "
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: AI Zhagan、VS Code 与系统版本
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已移除令牌、OAuth 数据、源代码和不必要的绝对路径
+          required: true

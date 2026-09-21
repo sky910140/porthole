@@ -1,0 +1,20 @@
+name: 功能建议
+description: 说明要解决的用户问题和必要范围
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 用户问题
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: 期望工作流
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: 已知约束或取舍

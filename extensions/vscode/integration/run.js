@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { runTests } = require('@vscode/test-electron');
+const { resolveTestRuntime } = require('./runtime');
 
 async function main() {
   const extensionDevelopmentPath = path.resolve(__dirname, '..');
@@ -14,8 +15,8 @@ async function main() {
   fs.mkdirSync(extensionsDir, { recursive: true });
   fs.rmSync(workspaceDir, { recursive: true, force: true });
   fs.cpSync(path.join(extensionDevelopmentPath, 'test-fixture'), workspaceDir, { recursive: true });
-  await runTests({
-    vscodeExecutablePath: 'D:\\Program Files\\Microsoft VS Code\\Code.exe',
+  const options = {
+    ...resolveTestRuntime(),
     extensionDevelopmentPath,
     extensionTestsPath: path.join(__dirname, 'suite.js'),
     extensionTestsEnv: { AI_ZHAGAN_EXTENSION_TEST: '1' },
@@ -27,7 +28,8 @@ async function main() {
       '--skip-welcome',
       '--skip-release-notes',
     ],
-  });
+  };
+  await runTests(options);
 }
 
 main().catch((error) => {

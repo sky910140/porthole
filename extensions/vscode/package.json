@@ -2,9 +2,9 @@
   "name": "ai-zhagan-context",
   "displayName": "AI Zhagan Context",
   "description": "将当前 VS Code 编辑上下文显式同步到本机 AI Zhagan 服务。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "local-ai-zhagan",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -58,7 +58,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node integration/run.js",
-    "check": "node --check extension.js && node --check lib/core.js && node --test test/*.test.js",
+    "check": "node --check extension.js && node --check lib/core.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
     "package": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {
