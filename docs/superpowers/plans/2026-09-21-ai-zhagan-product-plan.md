@@ -181,7 +181,7 @@ class ChangeResult(TypedDict):
 
 每个任务遵循：先写能复现所需行为的测试，确认失败原因，再实现并运行针对性验证，最后评审与提交。命令中的 Python 路径沿用当前工作区虚拟环境；干净 CI 使用对应已安装解释器。
 
-### T00：先验证高风险路径和首次使用假设
+### Task 0：先验证高风险路径和首次使用假设
 
 **依赖：** 用户批准进入实施后执行；当前仅写计划。  
 **文件：** 新增 `docs/acceptance/feasibility.md`、`docs/decisions/0001-write-path.md`；隔离实验放入 `experiments/product-feasibility/`，默认不加入运行包。  
@@ -196,7 +196,7 @@ class ChangeResult(TypedDict):
 
 **验收：** 三项技术实验和上手路径均有可复现证据；无明确写入方案时 T06 可继续研究状态存储，但不得宣称 v0.3 自动应用可交付。实验代码不直接作为生产实现。
 
-### T01：建立开源与可复现基线
+### Task 1：建立开源与可复现基线
 
 **依赖：** T00 的基线结论；用户确认范围、开源意向及许可证。  
 **文件：** `README.md`、`pyproject.toml`、`extensions/vscode/package.json`、`extensions/vscode/LICENSE.txt`、`extensions/vscode/integration/run.js`；新增 `LICENSE`、`CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`、`CHANGELOG.md`、`.github/ISSUE_TEMPLATE/*`、`.github/PULL_REQUEST_TEMPLATE.md`。
@@ -214,7 +214,7 @@ class ChangeResult(TypedDict):
 
 **验收：** 另一台机器无需修改作者路径即可运行；包中不含个人配置与状态；许可证和包元数据一致。
 
-### T02：稳定协议与真实连接状态
+### Task 2：稳定协议与真实连接状态
 
 **依赖：** T01。  
 **文件：** 新增 `protocol.py`、`health.py`、`tests/test_health.py`；修改 `admin.py`、`server.py`、`cli.py`、`static/app.js`。
@@ -245,7 +245,7 @@ def test_local_health_does_not_claim_remote_success():
 **运行：** `.venv\Scripts\python.exe -m pytest tests/test_health.py tests/test_services.py -q`。  
 **验收：** 连接页面能区分本地未启动、通道失败、OAuth 失效、尚无真实工具调用。
 
-### T03：运行包、安装与本机配对
+### Task 3：运行包、安装与本机配对
 
 **依赖：** T02。  
 **文件：** 新增 `pairing.py`、`scripts/build-runtime.ps1`、`extensions/vscode/lib/service-manager.js`、`tests/test_pairing.py`、`extensions/vscode/test/service-manager.test.js`；修改 `cli.py` 和扩展入口。
@@ -266,7 +266,7 @@ def test_local_health_does_not_claim_remote_success():
 
 **验收：** 无开发运行时的新机器能启动；用户无需手动复制管理令牌；旧手动配置仍可迁移。
 
-### T04：项目访问范围与有界读取
+### Task 4：项目访问范围与有界读取
 
 **依赖：** T02，UI 依赖 T03。  
 **文件：** 新增 `policy.py`、`tests/test_policy.py`；修改 `config.py`、`workspace.py`、`server.py`、`git_read.py`、`context.py`、`tests/test_workspace.py`。
@@ -285,7 +285,7 @@ def test_local_health_does_not_claim_remote_success():
 
 **验收：** 所有读取路径使用同一授权结果；扫描被截断时不能显示“已扫描整个项目”。
 
-### T05：首次使用向导与 v0.2 验收
+### Task 5：首次使用向导与 v0.2 验收
 
 **依赖：** T03、T04。  
 **文件：** 新增 `extensions/vscode/lib/onboarding.js`、`extensions/vscode/test/onboarding.test.js`、`docs/quickstart.md`、`docs/compatibility.md`；修改扩展入口、设置声明、管理页面、`integration/suite.js`。
@@ -306,7 +306,7 @@ def test_local_health_does_not_claim_remote_success():
 **运行：** 扩展目录 `npm run check`、`npm run test:integration`；根目录 `npm run test:e2e`。  
 **验收：** 满足设计稿中的安装与新用户上手门槛；未通过则继续修复，不进入写入功能公开发布。
 
-### T06：持久化修改单与去重
+### Task 6：持久化修改单与去重
 
 **依赖：** T04；对外发布依赖 T05。  
 **文件：** 新增 `changes/__init__.py`、`changes/models.py`、`changes/store.py`、`changes/content.py`、`tests/test_changes_store.py`。
@@ -348,7 +348,7 @@ def test_same_request_survives_restart(tmp_path, test_key_provider):
 **运行：** `.venv\Scripts\python.exe -m pytest tests/test_changes_store.py -q`。  
 **验收：** 同请求重试 100 次仅一份记录；同键异内容返回明确冲突；重启后可查。
 
-### T07：版本校验、写入与恢复执行器
+### Task 7：版本校验、写入与恢复执行器
 
 **依赖：** T06，以及 T00 明确通过或调整后的写入路径结论。  
 **文件：** 新增 `changes/executor.py`、`changes/recovery.py`、`tests/test_changes_executor.py`、`tests/test_changes_recovery.py`。
@@ -370,7 +370,7 @@ def test_same_request_survives_restart(tmp_path, test_key_provider):
 
 **验收：** 每个故障点均有确定可解释的状态与恢复数据；回滚不得覆盖不匹配的当前内容。
 
-### T08：MCP 提交、查询和本机应用接口
+### Task 8：MCP 提交、查询和本机应用接口
 
 **依赖：** T06、T07、T04。  
 **文件：** 新增 `changes/service.py`、`tests/test_changes_api.py`；修改 `server.py`、`admin.py`、`auth.py`、`protocol.py`。
@@ -390,7 +390,7 @@ def test_same_request_survives_restart(tmp_path, test_key_provider):
 
 **验收：** 远程提交能落库和查询，任何远程请求均不能直接写入文件；不兼容客户端无法误用写功能。
 
-### T09：VS Code 差异审阅与实时就绪检查
+### Task 9：VS Code 差异审阅与实时就绪检查
 
 **依赖：** T05、T08。  
 **文件：** 新增 `editor_readiness.py`、`extensions/vscode/lib/changes.js`、`extensions/vscode/lib/readiness.js`、`tests/test_editor_readiness.py`、`extensions/vscode/test/changes.test.js`；修改扩展入口和管理路由。
@@ -412,7 +412,7 @@ def test_same_request_survives_restart(tmp_path, test_key_provider):
 
 **验收：** 网页提交后扩展显示同一修改单；点击应用前不改磁盘；脏文档及失效租约不写入。
 
-### T10：诊断、故障演练与 v0.3 验收
+### Task 10：诊断、故障演练与 v0.3 验收
 
 **依赖：** T07–T09。  
 **文件：** 新增 `diagnostics.py`、`tests/test_diagnostics.py`、`tests/test_fault_recovery.py`、`tests/e2e/changes.cjs`、`docs/acceptance/changes-beta.md`；修改 CLI、管理页和扩展活动视图。
@@ -432,7 +432,7 @@ def test_same_request_survives_restart(tmp_path, test_key_provider):
 
 **验收：** 修改结果、原文件和日志一致；故障可诊断；真实网页验收与自动化报告分别归档。
 
-### T11：升级、兼容性与候选发布流水线
+### Task 11：升级、兼容性与候选发布流水线
 
 **依赖：** T10。  
 **文件：** 修改运行包构建脚本、扩展 service-manager、`config.py`；新增 `tests/test_upgrade.py`、`.github/workflows/ci.yml`、`.github/workflows/release-candidate.yml`、`docs/releasing.md`。
@@ -453,7 +453,7 @@ def test_same_request_survives_restart(tmp_path, test_key_provider):
 
 **验收：** 失败升级可恢复，用户项目文件不受卸载影响，候选产物可复现且版本一致。
 
-### T12：试用反馈与 v1.0 发布评审
+### Task 12：试用反馈与 v1.0 发布评审
 
 **依赖：** T11。  
 **文件：** `README.md`、新增 `README.en.md`、`docs/acceptance/v1.md`、`docs/troubleshooting.md`、`docs/compatibility.md`、`CHANGELOG.md`。
