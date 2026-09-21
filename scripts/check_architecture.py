@@ -12,6 +12,7 @@ DEFAULT_FILES = (
     "src/project_mcp/context.py",
     "src/project_mcp/git_read.py",
     "src/project_mcp/health.py",
+    "src/project_mcp/pairing.py",
     "src/project_mcp/workspace.py",
     "src/project_mcp/protocol.py",
     "src/project_mcp/policy.py",

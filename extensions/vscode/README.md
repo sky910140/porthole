@@ -4,13 +4,12 @@
 
 ## 安装
 
-在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `ai-zhagan-context-0.1.0.vsix`。
+在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `ai-zhagan-context-0.2.0.vsix`。
 
 ## 使用
 
-1. 确保本机服务运行在 `http://127.0.0.1:8766`（默认值）；也接受 `localhost` 和其他 1024–65535 端口。
-2. 打开命令面板，运行 `AI Zhagan: 配置连接`。
-3. 输入 Bearer token，并从服务返回的项目中选择一个。绑定按工作区文件夹保存；token 只进入 VS Code SecretStorage，不写入设置。
+1. 已安装受管理运行包时，运行 `AI Zhagan: 启动并安全配对本机服务`。扩展从固定用户目录启动运行包，通过两分钟有效的一次性配对码取得凭据，并存入 VS Code SecretStorage。
+2. 使用已有手动服务时，明确运行 `AI Zhagan: 配置连接`，再输入 Bearer token 并选择项目。扩展不会停止或升级手动服务。
 4. 打开绑定文件夹内的文件，运行 `AI Zhagan: 发布当前编辑上下文`。首次同步必须手动执行。
 5. 如需自动同步，在当前工作区文件夹设置中启用 `aiZhagan.autoSync`。默认关闭，默认防抖 750 ms。
 6. 运行 `AI Zhagan: 断开并清除上下文` 会删除服务端的当前编辑器会话上下文，并清除该文件夹的本地绑定和 token。
@@ -60,4 +59,4 @@ npm run check
 npm run package
 ```
 
-集成测试使用本机已安装的 VS Code `D:\Program Files\Microsoft VS Code\Code.exe`，并在 `.integration-runtime` 下创建隔离的用户数据和扩展目录。它启动真实 Extension Host 与本地 HTTP stub，验证配置、SecretStorage、未保存文本、选区、工作区边界和服务端清理；不会测试 ChatGPT 或 Claude 的登录流程。
+设置 `VSCODE_EXECUTABLE_PATH` 时，集成测试使用指定 VS Code；否则测试框架下载固定版本。每次运行使用独立临时用户数据和扩展目录。它启动真实 Extension Host 与本地 HTTP stub，验证配置、SecretStorage、未保存文本、选区、工作区边界和服务端清理；不会测试 ChatGPT 或 Claude 的登录流程。

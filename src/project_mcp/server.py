@@ -14,6 +14,7 @@ from .auth import build_auth
 from .config import Project, Settings, save_config
 from .context import ContextStore
 from .health import HealthRegistry
+from .pairing import PairingStore
 from .runtime_limits import BusyError, RuntimeLimits
 from .workspace import Workspace
 
@@ -25,6 +26,10 @@ class Runtime:
         self.contexts = ContextStore()
         self.health = HealthRegistry()
         self.limits = RuntimeLimits()
+        state_dir = settings.state_dir or (
+            config_path.parent / ".local" if config_path else Path.home() / ".ai-zhagan"
+        )
+        self.pairing = PairingStore(state_dir)
         self.stop_requested = asyncio.Event()
         self.config_id = hashlib.sha256(str(config_path.resolve() if config_path else "memory").encode()).hexdigest()
         self.excluded_paths = [p for p in (settings.state_dir, config_path) if p is not None]

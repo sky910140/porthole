@@ -21,6 +21,18 @@ def free_port():
         return s.getsockname()[1]
 
 
+def test_server_command_supports_python_and_frozen_runtime(tmp_path):
+    from project_mcp.cli import server_command
+
+    config = tmp_path / "config.json"
+    assert server_command(config, executable="python.exe", frozen=False) == [
+        "python.exe", "-m", "project_mcp.cli", "serve", "--config", str(config)
+    ]
+    assert server_command(config, executable="ai-zhagan.exe", frozen=True) == [
+        "ai-zhagan.exe", "serve", "--config", str(config)
+    ]
+
+
 def test_init_preserves_existing_config_and_doctor(tmp_path):
     config = tmp_path / "local.json"
     r = invoke("init", "--config", config, "--project", tmp_path, "--id", "demo")
@@ -72,3 +84,23 @@ def test_start_http_mcp_status_and_stop_only_owned_server(tmp_path):
         stopped = invoke("stop", "--config", config)
         assert stopped.returncode == 0, stopped.stderr
     assert invoke("status", "--config", config).returncode != 0
+
+
+def test_concurrent_start_reuses_single_managed_instance(tmp_path):
+    config = tmp_path / "local.json"
+    assert invoke("init", "--config", config, "--project", tmp_path, "--id", "demo").returncode == 0
+    value = json.loads(config.read_text())
+    value.update(mcp_port=free_port(), admin_port=free_port())
+    config.write_text(json.dumps(value))
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    command = [sys.executable, "-m", "project_mcp.cli", "start", "--config", str(config)]
+    first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    second = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    try:
+        first_out, first_err = first.communicate(timeout=35)
+        second_out, second_err = second.communicate(timeout=35)
+        assert first.returncode == 0, first_err or first_out
+        assert second.returncode == 0, second_err or second_out
+        assert invoke("status", "--config", config).returncode == 0
+    finally:
+        invoke("stop", "--config", config)

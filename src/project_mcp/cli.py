@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .config import Settings, load_config, save_config
+from .config import Settings, default_config_path, load_config, save_config
 
 
 def status(settings, path):
@@ -31,6 +31,13 @@ def status(settings, path):
     except (httpx.HTTPError, ValueError):
         pass
     return None
+
+
+def server_command(path: Path, *, executable: str | None = None, frozen: bool | None = None):
+    executable = executable or sys.executable
+    frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    prefix = [executable] if frozen else [executable, "-m", "project_mcp.cli"]
+    return [*prefix, "serve", "--config", str(path)]
 
 
 async def serve(settings, path):
@@ -76,14 +83,22 @@ def start(settings, path):
         print("Already running")
         return
     lock_path = settings.state_dir / "starting.lock"
-    try:
-        lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        raise ValueError("Startup already in progress; inspect .local/starting.lock if interrupted") from None
+    lock_fd = None
+    for _ in range(100):
+        try:
+            lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            if status(settings, path):
+                print("Already running")
+                return
+            time.sleep(0.1)
+    if lock_fd is None:
+        raise ValueError("Startup still in progress; inspect .local/starting.lock if interrupted")
     os.close(lock_fd)
     try:
         with (settings.state_dir / "server.log").open("ab") as log:
-            process = subprocess.Popen([sys.executable, "-m", "project_mcp.cli", "serve", "--config", str(path)],
+            process = subprocess.Popen(server_command(path),
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 start_new_session=os.name != "nt")
@@ -118,13 +133,13 @@ def stop(settings, path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Local Project Assistant")
-    parser.add_argument("command", choices=["init", "serve", "start", "stop", "status", "doctor", "token"])
-    parser.add_argument("--config", type=Path, default=Path("config/local.json"))
+    parser.add_argument("command", choices=["init", "serve", "start", "stop", "status", "doctor", "token", "pair"])
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--id", default="current")
     parser.add_argument("--kind", choices=["admin", "mcp"], default="admin")
     args = parser.parse_args(argv)
-    path = args.config.resolve()
+    path = (args.config or default_config_path()).resolve()
     try:
         if args.command == "init":
             if path.exists():
@@ -176,6 +191,14 @@ def main(argv=None):
         elif args.command == "token":
             # Only this explicit user-facing command prints credentials; never include in status/logs.
             print(settings.admin_token if args.kind == "admin" else settings.mcp_token)
+        elif args.command == "pair":
+            from .pairing import PairingStore
+
+            result = PairingStore(settings.state_dir).issue()
+            print(json.dumps({
+                **result,
+                "service_url": f"http://127.0.0.1:{settings.admin_port}",
+            }))
         return 0
     except (ValueError, OSError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

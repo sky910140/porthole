@@ -32,14 +32,15 @@ class LocalBoundary(BaseHTTPMiddleware):
                 or request.headers.get("origin") not in (None, *self.origins)):
             return JSONResponse({"error": "Local origin required"}, status_code=403)
         if request.url.path.startswith("/api/"):
-            supplied = request.headers.get("authorization", "")
-            if not hmac.compare_digest(supplied.encode(), b"Bearer " + self.token):
-                return JSONResponse({"error": "Local access token required"}, status_code=401)
             now = time.monotonic()
             self.calls = [stamp for stamp in self.calls if now - stamp < 60]
             if len(self.calls) >= 180:
                 return JSONResponse({"error": "Too many requests"}, status_code=429)
             self.calls.append(now)
+            if request.url.path != "/api/pair":
+                supplied = request.headers.get("authorization", "")
+                if not hmac.compare_digest(supplied.encode(), b"Bearer " + self.token):
+                    return JSONResponse({"error": "Local access token required"}, status_code=401)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -106,6 +107,15 @@ def create_app(runtime):
     async def action(request: Request):
         try:
             path = request.url.path
+            if path == "/api/pair" and request.method == "POST":
+                data = await body(request)
+                if not runtime.pairing.consume(str(data.get("pairing_code", ""))):
+                    return JSONResponse({"error": "Invalid or expired pairing code"}, status_code=401)
+                return JSONResponse({
+                    **service_info().model_dump(mode="json"),
+                    "service_url": f"http://127.0.0.1:{runtime.settings.admin_port}",
+                    "admin_token": runtime.settings.admin_token,
+                })
             if path == "/api/shutdown" and request.method == "POST":
                 runtime.stop_requested.set()
             elif path == "/api/projects" and request.method == "PUT":
@@ -138,6 +148,7 @@ def create_app(runtime):
         return FileResponse(STATIC / name)
 
     app = Starlette(routes=[Route("/", static), Route("/health", health),
+        Route("/api/pair", action, methods=["POST"]),
         Route("/api/status", status), Route("/api/projects", action, methods=["PUT"]),
         Route("/api/shutdown", action, methods=["POST"]),
         Route("/api/projects/{project_id}", action, methods=["DELETE"]),

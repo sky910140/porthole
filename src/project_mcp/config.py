@@ -11,6 +11,17 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+def default_config_path() -> Path:
+    override = os.environ.get("AI_ZHAGAN_HOME")
+    if override:
+        root = Path(override)
+    elif os.name == "nt" or os.environ.get("LOCALAPPDATA"):
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "AI Zhagan"
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ai-zhagan"
+    return (root / "config.json").expanduser().resolve()
+
+
 class Project(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")

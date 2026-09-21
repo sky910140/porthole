@@ -34,7 +34,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.2.0.vsix`。
 
 1. 打开已登记的项目目录。
-2. 执行 `AI Zhagan: 配置连接`，输入本机管理令牌并选择对应项目。
+2. 使用受管理运行包时执行 `AI Zhagan: 启动并安全配对本机服务`，无需复制管理令牌；沿用手动服务时执行 `AI Zhagan: 配置连接`。
 3. 执行 `AI Zhagan: 发布当前编辑上下文`。令牌存入 VS Code SecretStorage。
 4. 执行 `AI Zhagan: 打开 ChatGPT / Claude`，使用 VS Code 集成浏览器；第三方登录需实际验证。
 5. 自动同步默认关闭，需要时在工作区启用 `aiZhagan.autoSync`。
@@ -95,6 +95,8 @@ npm run package
 ```
 
 Python 测试覆盖真实文件/Git、越界与秘密过滤、认证、MCP 客户端、真实 HTTP 服务启停。浏览器测试验证登录错误反馈、项目管理、文本安全、页面刷新后的凭据清除和移动布局。扩展测试运行在隔离的真实 Extension Host 中，不改变日常 VS Code 配置。
+
+独立 Windows 运行包的构建、清单和无 Python/Node 路径黑盒验证见 [运行包说明](docs/runtime.md)。
 
 本次结果与验收边界见 [自测报告](docs/self-test-report.md)。
 

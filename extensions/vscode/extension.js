@@ -1,6 +1,11 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const vscode = require('vscode');
 const {
   ContextClient,
@@ -9,6 +14,9 @@ const {
   relativeWorkspacePath,
   validateProjectBinding,
 } = require('./lib/core');
+const { ServiceManager } = require('./lib/service-manager');
+
+const execFileAsync = promisify(execFile);
 
 const TOKEN_PREFIX = 'aiZhagan.token:';
 const DEFAULT_URL = 'http://127.0.0.1:8766';
@@ -203,6 +211,80 @@ async function configure() {
   vscode.window.showInformationMessage(`已绑定 ${folder.name}；请运行“发布当前编辑上下文”进行首次同步。`);
 }
 
+function managedRuntimePaths() {
+  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  const home = path.join(localAppData, 'AI Zhagan');
+  return {
+    executable: path.join(home, 'runtime', 'current', 'ai-zhagan.exe'),
+    config: path.join(home, 'config.json'),
+    log: path.join(home, '.local', 'server.log'),
+  };
+}
+
+function projectIdFor(folder) {
+  return `workspace-${crypto.createHash('sha256').update(folder.uri.fsPath).digest('hex').slice(0, 12)}`;
+}
+
+async function pairManagedRuntime() {
+  const binding = activeBinding(true);
+  if (!binding) return;
+  const paths = managedRuntimePaths();
+  if (!fs.existsSync(paths.executable)) {
+    throw new Error(`未安装受管理运行包：${paths.executable}`);
+  }
+  const projectId = projectIdFor(binding.folder);
+  if (!fs.existsSync(paths.config)) {
+    await execFileAsync(paths.executable, [
+      'init', '--config', paths.config, '--project', binding.folder.uri.fsPath, '--id', projectId,
+    ], { windowsHide: true });
+  }
+  const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  const serviceUrl = normalizeServiceUrl(`http://127.0.0.1:${config.admin_port}`);
+  const manager = new ServiceManager({
+    status: async () => {
+      try {
+        const response = await fetch(`${serviceUrl}/health`, { signal: AbortSignal.timeout(1500) });
+        if (!response.ok) return null;
+        const value = await response.json();
+        if (value.service !== 'ai-zhagan') return null;
+        return { serviceUrl, apiVersion: value.protocol_version, capabilities: value.capabilities || [] };
+      } catch { return null; }
+    },
+    launch: async () => {
+      try { await execFileAsync(paths.executable, ['start', '--config', paths.config], { windowsHide: true }); }
+      catch (error) { throw new Error(`本机服务启动失败，请检查 ${paths.log}：${error.message}`); }
+    },
+  });
+  await manager.ensureService();
+  const paired = await execFileAsync(paths.executable, ['pair', '--config', paths.config], { windowsHide: true });
+  const issued = JSON.parse(paired.stdout);
+  const response = await fetch(`${serviceUrl}/api/pair`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pairing_code: issued.pairing_code }), signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error('本机配对码无效或已过期，请重试。');
+  const credentials = await response.json();
+  const client = new ContextClient(serviceUrl, credentials.admin_token);
+  let status = await client.getStatus();
+  let project = status.projects.find((item) => {
+    try {
+      validateProjectBinding({ projects: [item] }, item.id, binding.folder.uri.fsPath);
+      return true;
+    } catch { return false; }
+  });
+  if (!project) {
+    await client.request('PUT', '/api/projects', {
+      id: projectId, name: binding.folder.name, root: binding.folder.uri.fsPath,
+    });
+    status = await client.getStatus();
+    project = status.projects.find((item) => item.id === projectId);
+  }
+  if (!project) throw new Error('本机服务未能登记当前工作区。');
+  await saveConnection(binding.folder, serviceUrl, project.id, credentials.admin_token);
+  setStatus('已连接', `${binding.folder.name} → ${project.name || project.id}`);
+  vscode.window.showInformationMessage('AI Zhagan 本机服务已启动并完成安全配对。');
+}
+
 async function saveConnection(folder, serviceUrl, projectId, token) {
   return withBindingLock(folder, async (key) => {
     const normalizedUrl = normalizeServiceUrl(serviceUrl);
@@ -291,6 +373,9 @@ function activate(context) {
   context.subscriptions.push(
     statusBar,
     vscode.commands.registerCommand('aiZhagan.configure', configure),
+    vscode.commands.registerCommand('aiZhagan.pairManaged', () => pairManagedRuntime().catch((error) => {
+      vscode.window.showErrorMessage(`AI Zhagan：${error.message}`);
+    })),
     vscode.commands.registerCommand('aiZhagan.publishContext', () => publishActiveContext()),
     vscode.commands.registerCommand('aiZhagan.disconnect', disconnect),
     vscode.commands.registerCommand('aiZhagan.openAssistant', openAssistant),
@@ -308,6 +393,8 @@ function activate(context) {
       getStoredToken: (folder) => context.secrets.get(tokenKey(folder)),
       publishActiveContext,
       disconnect,
+      managedRuntimePaths,
+      pairManagedRuntime,
       getSessionId: sessionFor,
     };
   }

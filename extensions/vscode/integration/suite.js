@@ -71,6 +71,7 @@ async function run() {
     assert.ok(extension);
     const api = await extension.activate();
     assert.ok((await vscode.commands.getCommands(true)).includes('workbench.action.browser.open'));
+    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.pairManaged'));
     await api.configureConnection(folderA, 'http://127.0.0.1:18766', 'project-a', 'extension-secret-a');
     await api.configureConnection(folderB, 'http://127.0.0.1:18766', 'project-b', 'extension-secret-b');
     assert.equal(await api.getStoredToken(folderA), 'extension-secret-a');
