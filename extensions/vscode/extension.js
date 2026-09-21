@@ -15,6 +15,8 @@ const {
   requireEditorBufferSharing,
   validateProjectBinding,
 } = require('./lib/core');
+const { ChangeActionRunner, createChangeClient } = require('./lib/changes');
+const { buildReadinessPayload } = require('./lib/readiness');
 const { ServiceManager } = require('./lib/service-manager');
 const {
   buildQuestionPrompt,
@@ -32,6 +34,8 @@ const sessions = new Map();
 const bindingGenerations = new Map();
 const pendingAttempts = new Map();
 const clearingKeys = new Set();
+const changeReviews = new Map();
+const virtualChangeContents = new Map();
 let statusBar;
 let extensionContext;
 let globalClosing = false;
@@ -96,6 +100,221 @@ function setStatus(text, tooltip, command = 'aiZhagan.publishContext') {
   statusBar.tooltip = tooltip;
   statusBar.command = command;
   statusBar.show();
+}
+
+function reviewForChange(changeId) {
+  return [...changeReviews.values()].find(
+    (review) => !changeId || review.change.change_id === changeId,
+  );
+}
+
+function changeIdFromArgument(value) {
+  if (typeof value === 'string') return value;
+  if (value && typeof value.change_id === 'string') return value.change_id;
+  return '';
+}
+
+async function publishReviewReadiness(review) {
+  const current = changeReviews.get(review.key);
+  if (current !== review || globalClosing || clearingKeys.has(review.key)) return false;
+  const payload = buildReadinessPayload({
+    projectId: review.change.project_id,
+    sessionId: review.sessionId,
+    rootPath: review.folder.uri.fsPath,
+    documents: vscode.workspace.textDocuments,
+    review: {
+      change_id: review.change.change_id,
+      manifest_sha256: review.change.manifest_sha256,
+    },
+  });
+  await review.client.updateReadiness(review.sessionId, payload);
+  return true;
+}
+
+async function clearReview(key) {
+  const review = changeReviews.get(key);
+  if (!review) return;
+  changeReviews.delete(key);
+  clearInterval(review.heartbeat);
+  for (const uri of review.virtualUris) virtualChangeContents.delete(uri.toString());
+  try { await review.client.deleteReadiness(review.sessionId); } catch { /* Best effort during disconnect. */ }
+}
+
+function virtualChangeUri(scheme, change, file) {
+  const uri = vscode.Uri.from({
+    scheme,
+    path: `/${change.change_id}/${file.path}`,
+    query: `manifest=${change.manifest_sha256}`,
+  });
+  return uri;
+}
+
+async function configuredChange(changeId) {
+  const folders = vscode.workspace.workspaceFolders || [];
+  const active = activeBinding(false);
+  const ordered = active
+    ? [active.folder, ...folders.filter((folder) => folder !== active.folder)]
+    : folders;
+  let lastError;
+  for (const folder of ordered) {
+    const config = folderConfiguration(folder);
+    if (!config.get('projectId', '').trim()) continue;
+    try {
+      const connection = await connectionFor(folder, config);
+      const client = createChangeClient(connection.client);
+      const change = await client.get(changeId);
+      if (change.project_id !== config.get('projectId', '').trim()) continue;
+      return { folder, client, change };
+    } catch (error) { lastError = error; }
+  }
+  throw lastError || new Error('没有已连接工作区可读取该修改建议。');
+}
+
+async function showChange(argument) {
+  let changeId = changeIdFromArgument(argument);
+  if (!changeId) {
+    changeId = await vscode.window.showInputBox({
+      title: '查看修改建议', prompt: '输入网页返回的修改编号',
+      validateInput: (value) => value.trim() ? null : '请输入修改编号。',
+    });
+  }
+  if (!changeId) return;
+  const { folder, client, change } = await configuredChange(changeId.trim());
+  const key = folder.uri.toString();
+  await clearReview(key);
+  const review = {
+    key, folder, client, change, sessionId: sessionFor(folder), virtualUris: [],
+    actions: null, heartbeat: null,
+  };
+  review.actions = new ChangeActionRunner(client);
+  changeReviews.set(key, review);
+  await publishReviewReadiness(review);
+  for (const file of change.files) {
+    let original;
+    if (file.operation === 'create') {
+      original = virtualChangeUri('ai-zhagan-original', change, file);
+      virtualChangeContents.set(original.toString(), '');
+      review.virtualUris.push(original);
+    } else {
+      original = vscode.Uri.joinPath(folder.uri, ...file.path.split('/'));
+    }
+    const proposed = virtualChangeUri('ai-zhagan-proposed', change, file);
+    virtualChangeContents.set(proposed.toString(), file.content_utf8);
+    review.virtualUris.push(proposed);
+    await vscode.commands.executeCommand(
+      'vscode.diff', original, proposed,
+      `${change.project_id} · ${file.path} · 修改建议`, { preview: false },
+    );
+  }
+  review.heartbeat = setInterval(() => {
+    publishReviewReadiness(review).catch(() => {});
+  }, 2000);
+  setStatus('待审阅', `${change.project_id} · ${change.change_id}`, 'aiZhagan.applyReviewedChange');
+  vscode.window.showInformationMessage(
+    `已打开 ${change.files.length} 个文件的修改差异。本地文件尚未改变。`,
+    '应用已审阅修改', '拒绝建议',
+  ).then((choice) => {
+    if (choice === '应用已审阅修改') {
+      vscode.commands.executeCommand('aiZhagan.applyReviewedChange', change.change_id);
+    }
+    if (choice === '拒绝建议') {
+      vscode.commands.executeCommand('aiZhagan.rejectChange', change.change_id);
+    }
+  });
+  return change;
+}
+
+async function applyReviewedChange(argument, manifestSha256) {
+  const changeId = changeIdFromArgument(argument);
+  const review = reviewForChange(changeId);
+  if (!review) throw new Error('请先运行“查看修改建议”并检查差异。');
+  if (manifestSha256 && manifestSha256 !== review.change.manifest_sha256) {
+    throw new Error('审阅内容已变化，请重新打开修改建议。');
+  }
+  await publishReviewReadiness(review);
+  const result = await review.actions.apply(review.change, review.sessionId);
+  review.change = { ...review.change, ...result };
+  if (result.state === 'applied') {
+    review.change = await review.client.get(review.change.change_id);
+    setStatus('已应用，未测试', `${review.change.project_id} · ${review.change.change_id}`);
+    const undo = review.change.undo_available && review.change.undo_expires_at
+      ? `可撤销至 ${new Date(review.change.undo_expires_at).toLocaleString()}。` : '当前没有可用撤销备份。';
+    vscode.window.showInformationMessage(`修改已应用，尚未运行项目测试。${undo}`);
+  }
+  return result;
+}
+
+async function rejectReviewedChange(argument) {
+  const review = reviewForChange(changeIdFromArgument(argument));
+  if (!review) throw new Error('请先打开要拒绝的修改建议。');
+  const result = await review.actions.reject(review.change);
+  review.change = { ...review.change, ...result };
+  setStatus('已拒绝', review.change.change_id);
+  return result;
+}
+
+async function revertReviewedChange(argument) {
+  const review = reviewForChange(changeIdFromArgument(argument));
+  if (!review) throw new Error('请先打开要撤销的修改记录。');
+  await publishReviewReadiness(review);
+  const result = await review.actions.revert(review.change, review.sessionId);
+  review.change = { ...review.change, ...result };
+  setStatus('已撤销', review.change.change_id);
+  return result;
+}
+
+async function viewRecovery(argument) {
+  const review = reviewForChange(changeIdFromArgument(argument));
+  if (!review) throw new Error('请先打开需要恢复的修改记录。');
+  const current = await review.client.get(review.change.change_id);
+  review.change = current;
+  await vscode.window.showInformationMessage(
+    current.state === 'recovery_required'
+      ? `修改 ${current.change_id} 需要恢复：${current.blocked_reason || '请先核对项目文件。'}`
+      : `修改 ${current.change_id} 当前状态：${current.state}`,
+    { modal: true },
+  );
+  return current;
+}
+
+function reportChangeError(error) {
+  const code = error && error.data && error.data.error_code;
+  if (code === 'EDITOR_DIRTY') return '相关文件有未保存内容。请打开并保存或放弃这些编辑，再重试检查。';
+  if (code === 'EDITOR_UNAVAILABLE') return '相关 VS Code 窗口已失联。请重新打开审阅，或清除失效会话。';
+  if (code === 'LEASE_EXPIRED') return '编辑器状态已变化或检查已过期，请重试应用。';
+  if (code === 'FILE_CHANGED') return '文件在建议生成后已变化，请根据当前内容重新生成修改建议。';
+  return error.message;
+}
+
+function publishAllReviewReadiness() {
+  for (const review of changeReviews.values()) {
+    publishReviewReadiness(review).catch(() => {});
+  }
+}
+
+function runChangeCommand(action) {
+  return (...args) => action(...args).catch((error) => {
+    const code = error && error.data && error.data.error_code;
+    const actions = code === 'EDITOR_DIRTY'
+      ? ['打开未保存文件', '重试检查']
+      : code === 'EDITOR_UNAVAILABLE'
+        ? ['重新打开审阅']
+        : code === 'LEASE_EXPIRED'
+          ? ['重试检查'] : [];
+    vscode.window.showErrorMessage(`AI Zhagan：${reportChangeError(error)}`, ...actions)
+      .then(async (choice) => {
+        const review = reviewForChange(changeIdFromArgument(args[0]));
+        if (choice === '打开未保存文件' && review) {
+          const dirty = vscode.workspace.textDocuments.find((document) => (
+            document.uri.scheme === 'file' && document.isDirty
+            && vscode.workspace.getWorkspaceFolder(document.uri) === review.folder
+          ));
+          if (dirty) await vscode.window.showTextDocument(dirty);
+        }
+        if (choice === '重新打开审阅' && review) await showChange(review.change.change_id);
+        if (choice === '重试检查') await action(...args);
+      });
+  });
 }
 
 async function publishActiveContext(options = {}) {
@@ -411,6 +630,7 @@ async function clearKeyContents(key) {
   const unique = new Map(candidates.map((item) => [`${item.serviceUrl}\0${item.sessionId}`, item]));
   const results = await Promise.allSettled([...unique.values()].map(({ client, sessionId }) => client.deleteContext(sessionId)));
   publishedConnections.delete(key);
+  await clearReview(key);
   const failure = results.find((result) => result.status === 'rejected');
   if (failure) throw failure.reason;
 }
@@ -473,8 +693,13 @@ function activate(context) {
   extensionContext = context;
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
   setStatus('未同步', '点击发布当前编辑上下文');
+  const contentProvider = {
+    provideTextDocumentContent: (uri) => virtualChangeContents.get(uri.toString()) ?? '',
+  };
   context.subscriptions.push(
     statusBar,
+    vscode.workspace.registerTextDocumentContentProvider('ai-zhagan-original', contentProvider),
+    vscode.workspace.registerTextDocumentContentProvider('ai-zhagan-proposed', contentProvider),
     vscode.commands.registerCommand('aiZhagan.configure', configure),
     vscode.commands.registerCommand('aiZhagan.onboarding', async () => {
       try {
@@ -494,7 +719,18 @@ function activate(context) {
     vscode.commands.registerCommand('aiZhagan.publishContext', () => publishActiveContext()),
     vscode.commands.registerCommand('aiZhagan.disconnect', disconnect),
     vscode.commands.registerCommand('aiZhagan.openAssistant', openAssistant),
-    vscode.workspace.onDidChangeTextDocument((event) => scheduleAutoSync(event.document)),
+    vscode.commands.registerCommand('aiZhagan.showChange', runChangeCommand(showChange)),
+    vscode.commands.registerCommand('aiZhagan.applyReviewedChange', runChangeCommand(applyReviewedChange)),
+    vscode.commands.registerCommand('aiZhagan.rejectChange', runChangeCommand(rejectReviewedChange)),
+    vscode.commands.registerCommand('aiZhagan.revertChange', runChangeCommand(revertReviewedChange)),
+    vscode.commands.registerCommand('aiZhagan.viewRecovery', runChangeCommand(viewRecovery)),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      scheduleAutoSync(event.document);
+      publishAllReviewReadiness();
+    }),
+    vscode.workspace.onDidOpenTextDocument(publishAllReviewReadiness),
+    vscode.workspace.onDidCloseTextDocument(publishAllReviewReadiness),
+    vscode.workspace.onDidSaveTextDocument(publishAllReviewReadiness),
     vscode.window.onDidChangeTextEditorSelection((event) => scheduleAutoSync(event.textEditor.document)),
     vscode.window.onDidChangeActiveTextEditor(cancelScheduledSyncs),
     vscode.languages.onDidChangeDiagnostics((event) => {
@@ -512,6 +748,12 @@ function activate(context) {
       pairManagedRuntime,
       runVsCodeOnboarding,
       getSessionId: sessionFor,
+      showChange,
+      applyReviewedChange,
+      rejectReviewedChange,
+      revertReviewedChange,
+      viewRecovery,
+      publishReviewReadiness: (changeId) => publishReviewReadiness(reviewForChange(changeId)),
     };
   }
 }
@@ -519,6 +761,7 @@ function activate(context) {
 async function deactivate() {
   globalClosing = true;
   cancelScheduledSyncs();
+  await Promise.allSettled([...changeReviews.keys()].map(clearReview));
   try { await clearAllBindings(); } catch { /* VS Code is closing; cleanup is best effort. */ }
 }
 

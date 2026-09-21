@@ -14,7 +14,9 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
 from .changes.content import QuotaExceeded, StorageUnavailable
-from .changes.store import IdempotencyConflict, RecordUnavailable
+from .changes.executor import FileChanged, RecoveryRequired
+from .changes.store import IdempotencyConflict, InvalidTransition, RecordUnavailable
+from .editor_readiness import ReadinessBlocked
 from .protocol import service_info
 from .runtime_limits import BusyError
 
@@ -103,6 +105,7 @@ def create_app(runtime):
                     **service_info().model_dump(mode="json"),
                     "projects": projects,
                     "sessions": runtime.contexts.list(),
+                    "editor_readiness_sessions": runtime.editor_readiness.list(),
                     "config_id": runtime.config_id,
                     "auth_mode": s.auth_mode,
                     "account_allowlist_configured": bool(s.github_user_ids),
@@ -156,18 +159,64 @@ def create_app(runtime):
                 return JSONResponse({
                     "changes": runtime.local_change_history(project_id),
                 })
+            elif path.startswith("/api/editor-readiness/") and request.method == "PUT":
+                data = await body(request)
+                workspace = runtime.workspace(data.get("project_id", ""))
+                for document in data.get("documents", []):
+                    workspace.resolve_file(document.get("path", ""), "read")
+                return JSONResponse(runtime.editor_readiness.update(
+                    request.path_params["session_id"], data,
+                ))
+            elif path.startswith("/api/editor-readiness/") and request.method == "DELETE":
+                runtime.editor_readiness.delete(request.path_params["session_id"])
+            elif path.startswith("/api/changes/") and request.method == "GET":
+                return JSONResponse(runtime.get_change_service().local_detail(
+                    request.path_params["change_id"],
+                ))
+            elif path.endswith("/readiness") and path.startswith("/api/changes/"):
+                return JSONResponse(runtime.get_change_service().issue_readiness(
+                    request.path_params["change_id"], await body(request),
+                ))
             elif path.endswith("/apply") and path.startswith("/api/changes/"):
-                result = runtime.get_change_service().apply_without_readiness(
+                result = runtime.get_change_service().apply_reviewed(
                     request.path_params["change_id"], await body(request),
                 )
-                return JSONResponse(result, status_code=409)
+                return JSONResponse(result, status_code=409 if result.get("error_code") else 200)
+            elif path.endswith("/reject") and path.startswith("/api/changes/"):
+                return JSONResponse(runtime.get_change_service().reject(
+                    request.path_params["change_id"], await body(request),
+                ))
+            elif path.endswith("/revert") and path.startswith("/api/changes/"):
+                result = runtime.get_change_service().revert(
+                    request.path_params["change_id"], await body(request),
+                )
+                return JSONResponse(result, status_code=409 if result.get("error_code") else 200)
+            elif path.endswith("/recovery") and path.startswith("/api/changes/"):
+                result = runtime.get_change_service().recover(
+                    request.path_params["change_id"], await body(request),
+                )
+                return JSONResponse(result, status_code=409 if result.get("error_code") else 200)
             return JSONResponse({"ok": True})
         except PermissionError:
             return JSONResponse({"error": "Path is not allowed"}, status_code=403)
         except RecordUnavailable:
             return JSONResponse({"error": "Change record unavailable"}, status_code=404)
-        except IdempotencyConflict:
+        except (IdempotencyConflict, InvalidTransition):
             return JSONResponse({"error": "Operation id was reused"}, status_code=409)
+        except ReadinessBlocked as exc:
+            return JSONResponse({
+                "error": exc.message,
+                "error_code": exc.error_code,
+                "blocked_reason": exc.message,
+            }, status_code=409)
+        except FileChanged as exc:
+            return JSONResponse({
+                "error": str(exc), "error_code": "FILE_CHANGED",
+            }, status_code=409)
+        except RecoveryRequired as exc:
+            return JSONResponse({
+                "error": str(exc), "error_code": "RECOVERY_REQUIRED",
+            }, status_code=409)
         except QuotaExceeded:
             return JSONResponse({"error": "Change storage quota exceeded"}, status_code=429)
         except (ValueError, TypeError, ValidationError, FileNotFoundError, UnicodeError):
@@ -190,7 +239,13 @@ def create_app(runtime):
         Route("/api/context/{session_id}", action, methods=["DELETE"]),
         Route("/api/verification-challenges", action, methods=["POST"]),
         Route("/api/changes", action, methods=["GET"]),
+        Route("/api/changes/{change_id}", action, methods=["GET"]),
+        Route("/api/changes/{change_id}/readiness", action, methods=["POST"]),
         Route("/api/changes/{change_id}/apply", action, methods=["POST"]),
+        Route("/api/changes/{change_id}/reject", action, methods=["POST"]),
+        Route("/api/changes/{change_id}/revert", action, methods=["POST"]),
+        Route("/api/changes/{change_id}/recovery", action, methods=["POST"]),
+        Route("/api/editor-readiness/{session_id}", action, methods=["PUT", "DELETE"]),
         Route("/{name}", static)])
     app.add_middleware(LocalBoundary, token=runtime.settings.admin_token,
                        port=runtime.settings.admin_port)

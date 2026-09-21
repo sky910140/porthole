@@ -21,6 +21,8 @@ CAPABILITIES = [
     "scope_preview",
     "change_proposals",
     "local_review_required",
+    "editor_readiness_lease",
+    "recoverable_local_apply",
 ]
 
 CheckState = Literal["unknown", "checking", "ok", "failed", "expired"]

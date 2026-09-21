@@ -67,6 +67,10 @@ def read_local_history(
     return [{
         **ChangeStore._result(row),
         "project_id": row["project_id"],
+        "summary": row["summary"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "expires_at": row["expires_at"],
     } for row in rows]
 
 
@@ -356,6 +360,23 @@ class ChangeStore:
         if row is None:
             raise RecordUnavailable("RECORD_UNAVAILABLE: change record does not exist")
         return dict(row)
+
+    def local_record(self, change_id: str) -> dict:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM changes WHERE change_id=?", (change_id,),
+            ).fetchone()
+        if row is None:
+            raise RecordUnavailable("RECORD_UNAVAILABLE: change record does not exist")
+        return {
+            **self._result(row),
+            "actor_id": row["actor_id"],
+            "project_id": row["project_id"],
+            "summary": row["summary"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "expires_at": row["expires_at"],
+        }
 
     def start_transaction(
         self,

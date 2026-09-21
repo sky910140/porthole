@@ -21,6 +21,7 @@ from .changes.store import (
 )
 from .config import Project, Settings, save_config
 from .context import ContextStore
+from .editor_readiness import EditorReadiness
 from .health import HealthRegistry
 from .pairing import PairingStore
 from .policy import ProjectPolicy
@@ -35,6 +36,7 @@ class Runtime:
         config_path: Path | None = None,
         *,
         change_store: ChangeStore | None = None,
+        editor_readiness: EditorReadiness | None = None,
     ):
         self.settings = settings
         self.config_path = config_path
@@ -51,7 +53,11 @@ class Runtime:
         self.excluded_paths = [p for p in (settings.state_dir, config_path) if p is not None]
         self.workspaces = {p.id: self._build_workspace(p) for p in settings.projects}
         self._change_store = change_store
-        self._change_service = ChangeService(self.workspace, change_store) if change_store else None
+        self.editor_readiness = editor_readiness or EditorReadiness()
+        self._change_service = (
+            ChangeService(self.workspace, change_store, readiness=self.editor_readiness)
+            if change_store else None
+        )
 
     def _build_workspace(self, project: Project) -> Workspace:
         policy = ProjectPolicy(
@@ -130,7 +136,9 @@ class Runtime:
             KeyringKeyProvider(self.config_id),
         )
         self._change_store = ChangeStore(self.state_dir / "changes" / "changes.db", content)
-        self._change_service = ChangeService(self.workspace, self._change_store)
+        self._change_service = ChangeService(
+            self.workspace, self._change_store, readiness=self.editor_readiness,
+        )
         return self._change_service
 
     def local_change_history(self, project_id: str | None = None) -> list[dict]:

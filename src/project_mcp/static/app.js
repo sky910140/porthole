@@ -1,5 +1,8 @@
 'use strict';
 let token = '';
+let changesTimer = null;
+let changesInFlight = false;
+const changeRevisions = new Map();
 const el = id => document.getElementById(id);
 function message(text, error = false) {
   el('message').textContent = text;
@@ -38,8 +41,14 @@ function projectItem(project) {
   const actions = document.createElement('div'); actions.className = 'project-actions';
   actions.append(
     actionButton(project.mode === 'propose' ? '改为仅查看代码' : '允许提出修改', async () => {
-      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', {mode: project.mode === 'propose' ? 'read_only' : 'propose'});
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', project.mode === 'propose'
+        ? {mode: 'read_only', apply_local_enabled: false} : {mode: 'propose'});
       await refresh(); message('项目模式已更新。');
+    }),
+    actionButton(project.apply_local_enabled ? '关闭本机应用' : '允许 VS Code 本机应用', async () => {
+      if (project.mode !== 'propose') throw new Error('请先开启“允许提出修改”。');
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', {apply_local_enabled: !project.apply_local_enabled});
+      await refresh(); message(project.apply_local_enabled ? '已关闭本机应用。' : '已允许 VS Code 在审阅和实时检查通过后应用。');
     }),
     actionButton(project.share_editor_buffers ? '停止共享未保存内容' : '共享未保存内容', async () => {
       await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', {share_editor_buffers: !project.share_editor_buffers});
@@ -63,6 +72,32 @@ const healthLabels = {
 const stateLabels = {
   unknown: '尚未验证', checking: '验证中', ok: '正常', failed: '失败', expired: '结果已过期',
 };
+const changeStateLabels = {
+  pending_review: '已收到建议，本地文件尚未改变', rejected: '已拒绝', expired: '已过期',
+  conflict: '文件已变化，需要重新生成', applying: '正在应用', applied: '已应用，尚未运行测试',
+  rolled_back: '应用失败，已安全恢复', recovery_required: '需要恢复',
+  reverting: '正在撤销', reverted: '已撤销',
+};
+function changeItem(change) {
+  const li = document.createElement('li'); li.className = 'project-item';
+  const summary = document.createElement('div'); summary.className = 'project-summary';
+  const title = document.createElement('strong'); title.textContent = change.summary || change.change_id;
+  const facts = document.createElement('div'); facts.className = 'project-facts';
+  const state = document.createElement('span'); state.className = 'badge';
+  state.textContent = changeStateLabels[change.state] || change.state;
+  const project = document.createElement('span'); project.textContent = `项目：${change.project_id}`;
+  const id = document.createElement('code'); id.textContent = change.change_id;
+  facts.append(state, project, id); summary.append(title, facts);
+  const actions = document.createElement('div'); actions.className = 'project-actions';
+  actions.append(actionButton('复制 VS Code 操作', async () => {
+    await navigator.clipboard.writeText(`在 VS Code 运行“AI Zhagan: 查看修改建议”，输入修改编号：${change.change_id}`);
+    message('已复制 VS Code 审阅步骤。');
+  }), actionButton('复制网页查询提示', async () => {
+    await navigator.clipboard.writeText(`请使用 AI Zhagan 调用 get_change_status，project_id=${change.project_id}，change_id=${change.change_id}。只返回工具实际结果。`);
+    message('已复制对应修改编号的查询提示。');
+  }));
+  li.append(summary, actions); return li;
+}
 function showPage(target) {
   document.querySelectorAll('[data-page]').forEach(page => { page.hidden = page.id !== target; });
   document.querySelectorAll('#main-nav button').forEach(button => {
@@ -85,6 +120,29 @@ async function refresh() {
   el('health').replaceChildren(...Object.entries(state.health || {}).map(([layer, check]) =>
     item(`${healthLabels[layer] || layer}：${stateLabels[check.state] || check.state}${check.error_code ? ` · ${check.error_code}` : ''}`)));
 }
+async function refreshChanges() {
+  if (!token || changesInFlight) return;
+  changesInFlight = true;
+  try {
+    const result = await api('/api/changes');
+    const accepted = (result.changes || []).filter(change => {
+      const prior = changeRevisions.get(change.change_id) || 0;
+      if (change.revision < prior) return false;
+      changeRevisions.set(change.change_id, change.revision);
+      return true;
+    });
+    el('changes').replaceChildren(...accepted.map(changeItem));
+    if (!accepted.length) el('changes').append(item('暂无修改建议。'));
+  } finally { changesInFlight = false; }
+}
+function scheduleChanges() {
+  clearTimeout(changesTimer);
+  if (!token) return;
+  changesTimer = setTimeout(async () => {
+    try { await refreshChanges(); } catch { /* The status message handles manual retries. */ }
+    scheduleChanges();
+  }, document.hidden ? 30000 : 3000);
+}
 async function run(button, operation) {
   button.disabled = true;
   try { await operation(); } catch (error) { message(error.message, true); }
@@ -92,9 +150,10 @@ async function run(button, operation) {
 }
 el('connect-form').onsubmit = event => {
   event.preventDefault(); token = el('token').value.trim(); el('token').value = '';
-  run(event.submitter, async () => { await refresh(); message('已连接。'); });
+  run(event.submitter, async () => { await refresh(); await refreshChanges(); scheduleChanges(); message('已连接。'); });
 };
-el('disconnect').onclick = () => { token = ''; el('workspace').hidden = true; el('projects').replaceChildren(); el('sessions').replaceChildren(); el('connection').textContent = '未连接'; message('已清除页面中的令牌。'); };
+el('disconnect').onclick = () => { token = ''; clearTimeout(changesTimer); el('workspace').hidden = true; el('projects').replaceChildren(); el('sessions').replaceChildren(); el('changes').replaceChildren(); el('connection').textContent = '未连接'; message('已清除页面中的令牌。'); };
+document.addEventListener('visibilitychange', scheduleChanges);
 document.querySelectorAll('#main-nav button').forEach(button => { button.onclick = () => showPage(button.dataset.target); });
 el('show-demo').onclick = () => {
   const demo = el('demo'); demo.hidden = !demo.hidden;

@@ -15,7 +15,12 @@
     "onCommand:aiZhagan.pairManaged",
     "onCommand:aiZhagan.publishContext",
     "onCommand:aiZhagan.disconnect",
-    "onCommand:aiZhagan.openAssistant"
+    "onCommand:aiZhagan.openAssistant",
+    "onCommand:aiZhagan.showChange",
+    "onCommand:aiZhagan.applyReviewedChange",
+    "onCommand:aiZhagan.rejectChange",
+    "onCommand:aiZhagan.revertChange",
+    "onCommand:aiZhagan.viewRecovery"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -25,7 +30,12 @@
       { "command": "aiZhagan.pairManaged", "title": "AI Zhagan: 启动并安全配对本机服务" },
       { "command": "aiZhagan.publishContext", "title": "AI Zhagan: 发布当前编辑上下文" },
       { "command": "aiZhagan.disconnect", "title": "AI Zhagan: 断开并清除上下文" },
-      { "command": "aiZhagan.openAssistant", "title": "AI Zhagan: 打开 ChatGPT / Claude" }
+      { "command": "aiZhagan.openAssistant", "title": "AI Zhagan: 打开 ChatGPT / Claude" },
+      { "command": "aiZhagan.showChange", "title": "AI Zhagan: 查看修改建议" },
+      { "command": "aiZhagan.applyReviewedChange", "title": "AI Zhagan: 应用已审阅修改" },
+      { "command": "aiZhagan.rejectChange", "title": "AI Zhagan: 拒绝修改建议" },
+      { "command": "aiZhagan.revertChange", "title": "AI Zhagan: 撤销已应用修改" },
+      { "command": "aiZhagan.viewRecovery", "title": "AI Zhagan: 查看修改恢复状态" }
     ],
     "configuration": {
       "title": "AI Zhagan",
@@ -62,7 +72,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node integration/run.js",
-    "check": "node --check extension.js && node --check lib/core.js && node --check lib/onboarding.js && node --check lib/protocol.js && node --check lib/service-manager.js && node --check lib/view-state.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
+    "check": "node --check extension.js && node --check lib/changes.js && node --check lib/core.js && node --check lib/onboarding.js && node --check lib/protocol.js && node --check lib/readiness.js && node --check lib/service-manager.js && node --check lib/view-state.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
     "package": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {

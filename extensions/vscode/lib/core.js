@@ -10,6 +10,15 @@ const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 4096;
 const MAX_SELECTION_TEXT_LENGTH = 262144;
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
+class ServiceError extends Error {
+  constructor(status, detail, data = null) {
+    super(`本机服务返回 HTTP ${status}${detail ? `：${detail}` : ''}`);
+    this.name = 'ServiceError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 function normalizeServiceUrl(value, options = {}) {
   let url;
   try {
@@ -104,11 +113,12 @@ class ContextClient {
     const responseText = await response.text();
     if (!response.ok) {
       let detail = responseText;
+      let parsed = null;
       try {
-        const parsed = JSON.parse(responseText);
+        parsed = JSON.parse(responseText);
         detail = parsed.error || parsed.message || responseText;
       } catch { /* Keep plain response text. */ }
-      throw new Error(`本机服务返回 HTTP ${response.status}${detail ? `：${detail}` : ''}`);
+      throw new ServiceError(response.status, detail, parsed);
     }
     if (!responseText) return null;
     try { return JSON.parse(responseText); } catch { throw new Error('本机服务返回了无效 JSON。'); }
@@ -121,6 +131,7 @@ class ContextClient {
 
 module.exports = {
   ContextClient,
+  ServiceError,
   MAX_DIAGNOSTICS,
   MAX_DIAGNOSTIC_MESSAGE_LENGTH,
   MAX_DIAGNOSTIC_SEVERITY_LENGTH,

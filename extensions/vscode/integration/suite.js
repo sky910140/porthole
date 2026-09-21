@@ -22,6 +22,15 @@ async function run() {
   ];
   const requests = [];
   const serverSessions = new Map();
+  const readinessSessions = new Map();
+  const change = {
+    change_id: 'change-1', project_id: 'project-a', summary: 'Update A',
+    state: 'pending_review', revision: 1, manifest_sha256: 'a'.repeat(64),
+    files: [{
+      path: 'inside-a.txt', operation: 'modify', base_sha256: 'b'.repeat(64),
+      content_sha256: 'c'.repeat(64), content_utf8: 'proposed from web\n',
+    }],
+  };
   let delayedStatus = null;
   let delayedPut = null;
   const server = http.createServer((request, response) => {
@@ -58,8 +67,34 @@ async function run() {
         serverSessions.set(payload.session_id, payload.project_id);
         response.statusCode = 204; return response.end();
       }
+      if (request.method === 'GET' && request.url === '/api/changes/change-1') {
+        return response.end(JSON.stringify(change));
+      }
+      if (request.method === 'PUT' && request.url.startsWith('/api/editor-readiness/')) {
+        const sessionId = decodeURIComponent(request.url.slice('/api/editor-readiness/'.length));
+        readinessSessions.set(sessionId, JSON.parse(body));
+        return response.end(JSON.stringify({ session_id: sessionId, revision: 1 }));
+      }
+      if (request.method === 'POST' && request.url === '/api/changes/change-1/readiness') {
+        const latest = [...readinessSessions.values()].at(-1);
+        const dirty = latest && latest.documents.some((document) => document.path === 'inside-a.txt' && document.dirty);
+        if (dirty) {
+          response.statusCode = 409;
+          return response.end(JSON.stringify({ error: 'dirty', error_code: 'EDITOR_DIRTY' }));
+        }
+        return response.end(JSON.stringify({ lease_id: 'lease-1', expires_in_ms: 5000 }));
+      }
+      if (request.method === 'POST' && request.url === '/api/changes/change-1/apply') {
+        change.state = 'applied'; change.revision = 2;
+        return response.end(JSON.stringify({ change_id: 'change-1', state: 'applied', revision: 2 }));
+      }
       if (request.method === 'DELETE') {
-        serverSessions.delete(decodeURIComponent(request.url.slice('/api/context/'.length)));
+        if (request.url.startsWith('/api/context/')) {
+          serverSessions.delete(decodeURIComponent(request.url.slice('/api/context/'.length)));
+        }
+        if (request.url.startsWith('/api/editor-readiness/')) {
+          readinessSessions.delete(decodeURIComponent(request.url.slice('/api/editor-readiness/'.length)));
+        }
         response.statusCode = 204; return response.end();
       }
       response.statusCode = 404; response.end(JSON.stringify({ error: 'not found' }));
@@ -94,6 +129,19 @@ async function run() {
     assert.match(uploads[0].text, /^unsaved /);
     assert.equal(uploads[0].selection.text, 'unsaved');
     assert.equal(uploads[1].path, 'inside-b.txt');
+
+    await documentA.save();
+    await api.showChange('change-1');
+    const reviewEditorA = await vscode.window.showTextDocument(documentA);
+    await reviewEditorA.edit((edit) => edit.insert(new vscode.Position(0, 0), 'edit after review '));
+    await api.publishReviewReadiness('change-1');
+    const readiness = [...readinessSessions.values()].at(-1);
+    assert.equal(readiness.active_review.change_id, 'change-1');
+    assert.equal(readiness.documents.find((item) => item.path === 'inside-a.txt').dirty, true);
+    await assert.rejects(api.applyReviewedChange('change-1'), /HTTP 409.*dirty/);
+    await documentA.save();
+    await api.publishReviewReadiness('change-1');
+    assert.equal((await api.applyReviewedChange('change-1')).state, 'applied');
 
     await vscode.workspace.getConfiguration('aiZhagan', folderA.uri).update('autoSync', true, vscode.ConfigurationTarget.WorkspaceFolder);
     await vscode.workspace.getConfiguration('aiZhagan', folderA.uri).update('debounceMs', 250, vscode.ConfigurationTarget.WorkspaceFolder);
