@@ -1,0 +1,68 @@
+{
+  "name": "ai-zhagan-context",
+  "displayName": "AI Zhagan Context",
+  "description": "将当前 VS Code 编辑上下文显式同步到本机 AI Zhagan 服务。",
+  "version": "0.1.0",
+  "publisher": "local-ai-zhagan",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:aiZhagan.configure",
+    "onCommand:aiZhagan.publishContext",
+    "onCommand:aiZhagan.disconnect",
+    "onCommand:aiZhagan.openAssistant"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "aiZhagan.configure", "title": "AI Zhagan: 配置连接" },
+      { "command": "aiZhagan.publishContext", "title": "AI Zhagan: 发布当前编辑上下文" },
+      { "command": "aiZhagan.disconnect", "title": "AI Zhagan: 断开并清除上下文" },
+      { "command": "aiZhagan.openAssistant", "title": "AI Zhagan: 打开 ChatGPT / Claude" }
+    ],
+    "configuration": {
+      "title": "AI Zhagan",
+      "properties": {
+        "aiZhagan.serviceUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8766",
+          "scope": "resource",
+          "description": "本机管理服务 URL，仅允许回环主机和 1024–65535 端口。"
+        },
+        "aiZhagan.projectId": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "与当前工作区文件夹绑定的项目 ID。"
+        },
+        "aiZhagan.autoSync": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "编辑后自动同步当前文件；默认关闭。"
+        },
+        "aiZhagan.debounceMs": {
+          "type": "number",
+          "default": 750,
+          "minimum": 250,
+          "maximum": 5000,
+          "scope": "resource",
+          "description": "自动同步防抖时间（毫秒）。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:integration": "node integration/run.js",
+    "check": "node --check extension.js && node --check lib/core.js && node --test test/*.test.js",
+    "package": "vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.6.0"
+  }
+}

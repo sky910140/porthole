@@ -1,0 +1,6 @@
+{
+  "projects": [],
+  "auth_mode": "local",
+  "mcp_port": 8765,
+  "admin_port": 8766
+}

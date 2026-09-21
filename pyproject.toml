@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-mcp-assistant"
+version = "0.1.0"
+description = "Local project context for official web chats, independent of IDEs"
+requires-python = ">=3.11"
+dependencies = ["fastmcp==3.4.7", "uvicorn>=0.35", "httpx>=0.28"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=1", "pytest-cov>=6", "ruff>=0.12"]
+
+[project.scripts]
+project-assistant = "project_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+project_mcp = ["static/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.coverage.run]
+source = ["project_mcp"]
+patch = ["subprocess"]
+parallel = true

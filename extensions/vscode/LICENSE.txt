@@ -1,0 +1,4 @@
+Copyright (c) 2026. All rights reserved.
+
+This package is provided for local project use. No permission is granted to
+redistribute, sublicense, or sell copies without written authorization.

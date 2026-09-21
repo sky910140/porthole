@@ -1,0 +1,57 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const net = require('node:net');
+const {spawnSync} = require('node:child_process');
+const {chromium} = require('playwright');
+const root = path.resolve(__dirname, '../..');
+const python = process.env.PYTHON || path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'project-assistant-e2e-'));
+const config = path.join(folder, 'local.json');
+function cli(...args) {
+  const r = spawnSync(python, ['-m', 'project_mcp.cli', ...args, '--config', config], {cwd:root,encoding:'utf8', timeout:35000, windowsHide:true});
+  assert.equal(r.status, 0, r.stderr || r.stdout); return r.stdout;
+}
+function freePort() { return new Promise(resolve => {const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const port=s.address().port;s.close(()=>resolve(port));});}); }
+(async () => {
+  let browser;
+  try {
+    cli('init', '--project', folder, '--id', 'browser-test');
+    const cfg = JSON.parse(fs.readFileSync(config)); cfg.mcp_port=await freePort();cfg.admin_port=await freePort(); fs.writeFileSync(config,JSON.stringify(cfg));
+    cli('start');
+    const secrets = JSON.parse(fs.readFileSync(path.join(folder, '.local/tokens.json')));
+    browser = await chromium.launch({headless:true});
+    const page = await browser.newPage({viewport:{width:1280,height:1000}});
+    const errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(`http://127.0.0.1:${cfg.admin_port}`);
+    await page.getByLabel('本机访问令牌', {exact:true}).fill('invalid-token');
+    await page.getByRole('button',{name:'连接', exact:true}).click();
+    await page.getByRole('status').filter({hasText:'令牌无效'}).waitFor();
+    await page.getByLabel('本机访问令牌', {exact:true}).fill(secrets.admin_token);
+    await page.getByRole('button',{name:'连接', exact:true}).click();
+    await page.getByText('本机已连接',{exact:true}).waitFor();
+    await page.getByText('browser-test · browser-test',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>localStorage.length),0);
+    assert.equal(await page.getByLabel('本机访问令牌',{exact:true}).inputValue(),'');
+    await page.getByText('添加项目',{exact:true}).click();
+    await page.getByLabel('项目标识',{exact:true}).fill('second');
+    await page.getByLabel('显示名称',{exact:true}).fill('<img src=x onerror=alert(1)>');
+    await page.getByLabel('本机绝对路径',{exact:true}).fill(folder);
+    await page.getByRole('button',{name:'授权此项目'}).click();
+    await page.getByText('<img src=x onerror=alert(1)> · second',{exact:true}).waitFor();
+    assert.equal(await page.locator('#projects img').count(),0);
+    page.on('dialog',dialog=>dialog.accept());
+    await page.locator('#projects li').filter({hasText:'second'}).getByRole('button').click();
+    await page.getByRole('status').filter({hasText:'已移除'}).waitFor();
+    const out=path.join(root,'artifacts');fs.mkdirSync(out,{recursive:true});
+    await page.screenshot({path:path.join(out,'management-desktop.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.screenshot({path:path.join(out,'management-mobile.png'),fullPage:true});
+    await page.reload();
+    assert.equal(await page.locator('#workspace').isVisible(),false);
+    assert.deepEqual(errors,[]);
+    console.log('PASS: browser login/errors, token memory, project CRUD, XSS text, responsive layout, reload isolation');
+  } finally { if(browser)await browser.close();cli('stop'); }
+})().catch(e=>{console.error(e);process.exitCode=1;});

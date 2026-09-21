@@ -1,0 +1,63 @@
+# AI Zhagan Context（VS Code）
+
+该扩展把当前编辑器的文件内容、选区和诊断信息发送到本机 AI Zhagan 管理服务。它不代理任何模型或账号登录，也不会扫描或发送其他工作区文件。
+
+## 安装
+
+在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `ai-zhagan-context-0.1.0.vsix`。
+
+## 使用
+
+1. 确保本机服务运行在 `http://127.0.0.1:8766`（默认值）；也接受 `localhost` 和其他 1024–65535 端口。
+2. 打开命令面板，运行 `AI Zhagan: 配置连接`。
+3. 输入 Bearer token，并从服务返回的项目中选择一个。绑定按工作区文件夹保存；token 只进入 VS Code SecretStorage，不写入设置。
+4. 打开绑定文件夹内的文件，运行 `AI Zhagan: 发布当前编辑上下文`。首次同步必须手动执行。
+5. 如需自动同步，在当前工作区文件夹设置中启用 `aiZhagan.autoSync`。默认关闭，默认防抖 750 ms。
+6. 运行 `AI Zhagan: 断开并清除上下文` 会删除服务端的当前编辑器会话上下文，并清除该文件夹的本地绑定和 token。
+
+`AI Zhagan: 打开 ChatGPT / Claude` 会先检查 VS Code 的“Browser: Open Integrated Browser”命令是否存在；存在时在集成浏览器中打开所选网站，否则只提示访问地址。网站登录由用户自行完成。扩展不保证第三方网站能在集成浏览器中完成登录。
+
+## 数据边界
+
+- 仅允许回环地址及 1024–65535 端口，拒绝远程主机、HTTPS 和特权端口。
+- 只发布当前活动编辑器，且文件必须位于显式绑定的工作区文件夹内。
+- `/api/status` 中所选项目的绝对 `root` 必须等于绑定工作区文件夹；每次发布前都会重新验证。
+- 文本来自编辑器文档，因此包含尚未保存的修改。
+- 单文件 UTF-8 内容上限 1 MiB；诊断最多 100 条。
+- 单条诊断的 severity 最多 20 字符、message 最多 4096 字符；选区文本最多 262144 字符，超出部分会截断。
+- 路径相对于绑定文件夹，并统一为 POSIX `/` 分隔符。
+- 选区来自当前编辑器；空选区发送 `null`。
+- 服务端上下文 TTL 为 900 秒。过期后需再次发布；启用自动同步时，只有新的编辑或选区、诊断变化才会触发续传。
+
+## 服务 API
+
+所有请求包含 `Authorization: Bearer <token>`。
+
+- `GET /api/status`：返回 `{ "projects": [{ "id": "...", "name": "...", "root": "D:\\\\project" }], "sessions": [] }`。`root` 仅用于本机管理接口的工作区绑定检查。
+- `PUT /api/context`：发送：
+
+```json
+{
+  "project_id": "project-id",
+  "session_id": "window-uuid",
+  "path": "src/main.js",
+  "version": 3,
+  "text": "完整文件文本",
+  "selection": { "start_line": 1, "end_line": 2, "text": "选中文本" },
+  "diagnostics": [{ "line": 5, "severity": "warning", "message": "说明" }]
+}
+```
+
+- `DELETE /api/context/{session_id}`：清除该工作区文件夹绑定会话发布的上下文。多根工作区的每个绑定使用独立 UUID。
+
+## 开发
+
+```powershell
+npm install
+npm test
+npm run test:integration
+npm run check
+npm run package
+```
+
+集成测试使用本机已安装的 VS Code `D:\Program Files\Microsoft VS Code\Code.exe`，并在 `.integration-runtime` 下创建隔离的用户数据和扩展目录。它启动真实 Extension Host 与本地 HTTP stub，验证配置、SecretStorage、未保存文本、选区、工作区边界和服务端清理；不会测试 ChatGPT 或 Claude 的登录流程。
