@@ -6,6 +6,7 @@ __pycache__/
 .coverage
 .coverage.*
 .integration-runtime/
+.vscode-test/
 htmlcov/
 *.egg-info/
 build/
