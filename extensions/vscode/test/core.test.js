@@ -15,6 +15,7 @@ const {
   buildContextPayload,
   normalizeServiceUrl,
   relativeWorkspacePath,
+  requireEditorBufferSharing,
   validateProjectBinding,
 } = require('../lib/core');
 
@@ -70,6 +71,15 @@ test('requires the selected project root to equal the bound workspace root', () 
   assert.throws(() => validateProjectBinding(status, 'missing', workspaceRoot), /不存在项目/);
   assert.throws(() => validateProjectBinding(status, 'p1', path.resolve('other')), /根目录不匹配/);
   assert.throws(() => validateProjectBinding({ projects: [{ id: 'p1' }] }, 'p1', workspaceRoot), /缺少 root/);
+});
+
+test('requires explicit project permission before sharing editor buffers', () => {
+  assert.equal(requireEditorBufferSharing({ share_editor_buffers: true }).share_editor_buffers, true);
+  assert.throws(
+    () => requireEditorBufferSharing({ share_editor_buffers: false }),
+    /管理页.*共享未保存内容/,
+  );
+  assert.throws(() => requireEditorBufferSharing({}), /管理页.*共享未保存内容/);
 });
 
 test('uses bearer authorization for status, context upload and deletion', async (t) => {

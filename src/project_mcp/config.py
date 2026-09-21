@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .policy import ProjectPolicy
 
 
 def default_config_path() -> Path:
@@ -27,6 +29,16 @@ class Project(BaseModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     root: Path
     name: str = Field(default="", max_length=100)
+    mode: Literal["read_only", "propose"] = "read_only"
+    paused: bool = False
+    apply_local_enabled: bool = False
+    share_editor_buffers: bool = False
+    exclude_paths: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("exclude_paths")
+    @classmethod
+    def validate_exclude_paths(cls, values):
+        return [ProjectPolicy.validate_pattern(value) for value in values]
 
     @model_validator(mode="after")
     def validate_root(self):

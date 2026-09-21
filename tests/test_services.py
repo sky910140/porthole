@@ -9,7 +9,7 @@ from project_mcp.config import Settings
 
 def settings(tmp_path):
     (tmp_path / "main.py").write_text("print('saved')\n", encoding="utf8")
-    return Settings(projects=[{"id": "demo", "root": tmp_path}],
+    return Settings(projects=[{"id": "demo", "root": tmp_path, "share_editor_buffers": True}],
                     admin_token="a" * 40, mcp_token="m" * 40, state_dir=tmp_path / ".local")
 
 
@@ -53,6 +53,14 @@ def test_admin_project_registration_persists_and_disables_removed_context(tmp_pa
                     headers={"Authorization": "Bearer " + s.admin_token}) as c:
         assert c.put("/api/projects", json={"id":"second", "root":str(tmp_path)}).status_code == 200
         assert len(json.loads(config_path.read_text())["projects"]) == 2
+        assert c.patch("/api/projects/second", json={
+            "mode": "propose", "share_editor_buffers": True,
+        }).status_code == 200
+        saved = json.loads(config_path.read_text())["projects"][1]
+        assert saved["mode"] == "propose"
+        assert saved["share_editor_buffers"] is True
+        status = c.get("/api/status").json()["projects"][1]
+        assert status["apply_local_enabled"] is False
         assert c.delete("/api/projects/second").status_code == 200
         assert [p["id"] for p in c.get("/api/status").json()["projects"]] == ["demo"]
 
@@ -82,14 +90,52 @@ async def test_real_mcp_client_tools_read_saved_and_editor_sources(tmp_path):
     })
     async with Client(create_mcp(runtime)) as client:
         names = {t.name for t in await client.list_tools()}
-        assert {"read_file", "search_code", "git_diff", "get_editor_context"} <= names
+        assert {
+            "read_file", "read_files", "preview_scope", "search_code", "git_diff",
+            "get_editor_context",
+        } <= names
         r = await client.call_tool("read_file", {"project_id":"demo", "path":"main.py"})
         assert "saved" in str(r.data)
+        r = await client.call_tool("read_files", {
+            "project_id": "demo", "requests": [{"path": "main.py"}],
+        })
+        assert r.data["results"][0]["ok"] is True
+        r = await client.call_tool("preview_scope", {"project_id": "demo"})
+        assert r.data["scan_complete"] is True
         r = await client.call_tool("get_editor_context", {"project_id":"demo", "session_id":"one"})
         assert r.data["text"] == "unsaved"
         assert r.data["source"] == "editor_buffer"
         r = await client.call_tool("read_file", {"project_id":"absent", "path":"main.py"}, raise_on_error=False)
         assert r.is_error
+
+
+@pytest.mark.asyncio
+async def test_policy_change_immediately_revokes_editor_and_file_access(tmp_path):
+    from fastmcp import Client
+
+    from project_mcp.server import Runtime, create_mcp
+
+    s = settings(tmp_path)
+    runtime = Runtime(s)
+    runtime.contexts.put(runtime.workspace("demo"), {
+        "project_id": "demo", "session_id": "one", "path": "main.py",
+        "version": 1, "text": "unsaved",
+    })
+    runtime.update_project_policy("demo", {
+        "paused": True,
+        "share_editor_buffers": False,
+    })
+    async with Client(create_mcp(runtime)) as client:
+        file_result = await client.call_tool(
+            "read_file", {"project_id": "demo", "path": "main.py"}, raise_on_error=False
+        )
+        context_result = await client.call_tool(
+            "get_editor_context",
+            {"project_id": "demo", "session_id": "one"},
+            raise_on_error=False,
+        )
+        assert file_result.is_error
+        assert context_result.is_error
 
 
 @pytest.mark.asyncio

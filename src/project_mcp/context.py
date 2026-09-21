@@ -46,6 +46,8 @@ class ContextStore:
         value = Snapshot.model_validate(payload)
         if value.project_id != workspace.project_id:
             raise ValueError("Project mismatch")
+        if not workspace.policy.allows_editor_buffer(value.path):
+            raise PermissionError("Editor buffer sharing is not enabled")
         workspace.resolve_file(value.path)
         if len(value.text.encode("utf8")) > 1048576:
             raise ValueError("Editor snapshot exceeds 1 MiB")

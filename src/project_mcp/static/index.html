@@ -13,13 +13,13 @@
 <p id="message" role="status" aria-live="polite"></p>
 <div id="workspace" hidden>
 <section><div class="section-heading"><h2>已授权项目</h2><button id="refresh" class="secondary">刷新状态</button></div>
-<p>AI 只能访问这里登记的项目。密钥文件、依赖目录和生成文件会被过滤。</p><ul id="projects"></ul>
+<p>AI 只能访问这里登记的项目。新项目默认“仅查看代码”。“允许提出修改”只允许创建待审阅修改单，不授权写入本机文件。</p><ul id="projects"></ul>
 <details><summary>添加项目</summary><form id="project-form" class="grid">
 <label>项目标识<input name="id" required pattern="[A-Za-z0-9_-]{1,64}" placeholder="例如 backend"></label>
 <label>显示名称<input name="name" maxlength="100" placeholder="例如 后端服务"></label>
 <label class="wide">本机绝对路径<input name="root" required placeholder="例如 D:\workspace\my-project"></label>
 <button type="submit">授权此项目</button></form></details></section>
-<section><h2>编辑器上下文</h2><p>由插件主动发布，15 分钟后过期。未保存内容不会写入项目文件。</p><ul id="sessions"></ul></section>
+<section><h2>编辑器上下文</h2><p>默认不共享未保存内容。开启后，插件可发布当前文件内容、选区和诊断；快照 15 分钟后过期，不会写入项目文件。</p><ul id="sessions"></ul></section>
 <section><h2>聊天连接</h2><p id="mode"></p><p id="endpoint"></p>
 <h3>连接状态</h3><ul id="health"></ul>
 <p class="hint">本地模式供开发和自测使用。连接 ChatGPT / Claude 网页需要固定 HTTPS 地址和 GitHub OAuth。真实账号登录及额度路径需要单独验收。</p>

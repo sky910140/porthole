@@ -22,10 +22,13 @@ def test_public_mode_fails_closed_without_oauth(tmp_path):
 
 def test_context_versions_isolation_and_expiry(tmp_path):
     from project_mcp.context import ContextStore
+    from project_mcp.policy import ProjectPolicy
     from project_mcp.workspace import Workspace
     (tmp_path / "main.py").write_text("saved", encoding="utf8")
     store = ContextStore(ttl=0.05)
-    workspace = Workspace(tmp_path, "demo")
+    workspace = Workspace(
+        tmp_path, "demo", policy=ProjectPolicy(share_editor_buffers=True)
+    )
     payload = {"project_id": "demo", "session_id": "editor-one", "path": "main.py", "version": 2,
                    "text": "unsaved", "selection": None, "diagnostics": []}
     store.put(workspace, payload)
@@ -43,11 +46,14 @@ def test_context_versions_isolation_and_expiry(tmp_path):
 
 def test_context_rejects_secrets_and_oversize(tmp_path):
     from project_mcp.context import ContextStore
+    from project_mcp.policy import ProjectPolicy
     from project_mcp.workspace import Workspace
     (tmp_path / ".env").write_text("SECRET=abc")
     (tmp_path / "main.py").write_text("ok")
     store = ContextStore()
-    workspace = Workspace(tmp_path, "demo")
+    workspace = Workspace(
+        tmp_path, "demo", policy=ProjectPolicy(share_editor_buffers=True)
+    )
     payload = {"project_id": "demo", "session_id": "editor-one", "path": ".env", "version": 1,
                    "text": "SECRET=abc", "diagnostics": []}
     with pytest.raises((ValueError, PermissionError)):

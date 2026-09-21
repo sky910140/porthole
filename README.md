@@ -35,11 +35,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 1. 打开已登记的项目目录。
 2. 使用受管理运行包时执行 `AI Zhagan: 启动并安全配对本机服务`，无需复制管理令牌；沿用手动服务时执行 `AI Zhagan: 配置连接`。
-3. 执行 `AI Zhagan: 发布当前编辑上下文`。令牌存入 VS Code SecretStorage。
+3. 如需分享未保存内容，先在本机管理页为该项目开启“共享未保存内容”，再执行 `AI Zhagan: 发布当前编辑上下文`。令牌存入 VS Code SecretStorage。
 4. 执行 `AI Zhagan: 打开 ChatGPT / Claude`，使用 VS Code 集成浏览器；第三方登录需实际验证。
 5. 自动同步默认关闭，需要时在工作区启用 `aiZhagan.autoSync`。
 
-磁盘工具读取已保存内容；`get_editor_context` 读取插件发布的内存快照。快照 15 分钟后失效。模型必须显式使用项目标识和会话标识，不能自动猜选另一窗口。
+磁盘工具读取已保存内容。未保存内容默认不共享；明确开启后，`get_editor_context` 才能读取插件发布的内存快照。快照 15 分钟后失效。模型必须显式使用项目标识和会话标识，不能自动猜选另一窗口。
+
+每个项目默认使用“仅查看代码”模式，也可以在本机管理页切换为“允许提出修改”。后者只开放创建待审阅修改单的能力，不等于允许写入；本机应用授权单独管理。暂停项目会立即撤销文件、Git 和编辑器上下文访问。
 
 插件详细设置和测试见 [扩展说明](extensions/vscode/README.md)。其他 IDE 可以实现相同本地接口，详见 [适配协议](docs/adapter-api.md)。
 
@@ -47,16 +49,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 | 工具 | 功能 |
 |---|---|
-| list_projects / workspace_info | 项目标识、Git 分支和提交信息 |
-| list_files | 分页列出允许访问的文件 |
+| list_projects / workspace_info | 项目标识、访问模式、Git 分支和提交信息 |
+| list_files | 分页列出允许访问的文件，区分下一页与扫描预算耗尽 |
 | search_code | 有界固定字符串搜索，附文件和行号 |
 | read_file | 按行读取，附 SHA-256 和修改时间 |
+| read_files | 一次读取最多 10 个文件，各条目独立返回范围错误 |
+| preview_scope | 预览可访问文件数量、排除原因和扫描完整性 |
 | git_status / git_diff | 允许路径内的保存后变更 |
 | list_editor_sessions | 已发布且未过期的编辑器会话 |
 | get_editor_context | 指定会话的文本、选区及诊断 |
 | verify_connection | 用本机生成的限时挑战执行一次真实读取，确认网页工具链可用 |
 
-读取结果有大小、时间和数量限制，`truncated` 表示不完整，应缩小查询范围。非 UTF-8 文件和二进制文件不提供文本读取。代码片段通过 MCP 返回后会被对应 AI 服务处理，不是完全本地推理。
+读取结果有大小、时间和数量限制。`has_more` 与 `next_offset` 表示可以继续翻页；`truncation_reason=scan_limit` 表示扫描预算耗尽，应缩小目录，不能视为已扫描完整项目。非 UTF-8 文件和二进制文件不提供文本读取。代码片段通过 MCP 返回后会被对应 AI 服务处理，不是完全本地推理。
 
 管理页和 `project-assistant doctor` 分开显示本机服务、公网通道、OAuth 和真实工具调用四层状态。启动成功只代表本机服务可用；只有本机生成挑战后，由已认证 AI 客户端调用 `verify_connection` 并完成项目读取，真实工具调用层才会显示正常。状态会过期，不能用历史成功代替当前连接。
 

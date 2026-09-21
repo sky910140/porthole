@@ -15,6 +15,7 @@ from .config import Project, Settings, save_config
 from .context import ContextStore
 from .health import HealthRegistry
 from .pairing import PairingStore
+from .policy import ProjectPolicy
 from .runtime_limits import BusyError, RuntimeLimits
 from .workspace import Workspace
 
@@ -33,8 +34,22 @@ class Runtime:
         self.stop_requested = asyncio.Event()
         self.config_id = hashlib.sha256(str(config_path.resolve() if config_path else "memory").encode()).hexdigest()
         self.excluded_paths = [p for p in (settings.state_dir, config_path) if p is not None]
-        self.workspaces = {p.id: Workspace(p.root, p.id, excluded_paths=self.excluded_paths)
-                           for p in settings.projects}
+        self.workspaces = {p.id: self._build_workspace(p) for p in settings.projects}
+
+    def _build_workspace(self, project: Project) -> Workspace:
+        policy = ProjectPolicy(
+            mode=project.mode,
+            paused=project.paused,
+            apply_local_enabled=project.apply_local_enabled,
+            share_editor_buffers=project.share_editor_buffers,
+            exclude_paths=project.exclude_paths,
+        )
+        return Workspace(
+            project.root,
+            project.id,
+            excluded_paths=self.excluded_paths,
+            policy=policy,
+        )
 
     def workspace(self, project_id: str):
         if project_id not in self.workspaces:
@@ -42,7 +57,13 @@ class Runtime:
         return self.workspaces[project_id]
 
     def projects(self):
-        return [{"id": p.id, "name": p.name or p.id} for p in self.settings.projects]
+        return [{
+            "id": p.id,
+            "name": p.name or p.id,
+            "mode": p.mode,
+            "paused": p.paused,
+            "share_editor_buffers": p.share_editor_buffers,
+        } for p in self.settings.projects]
 
     def update_project(self, data: dict):
         project = Project.model_validate(data)
@@ -50,11 +71,27 @@ class Runtime:
             raise ValueError("Project ID already registered; remove it before changing its root")
         new = self.settings.model_copy(update={"projects": [*self.settings.projects, project]})
         new = Settings.model_validate(new.model_dump())
-        workspace = Workspace(project.root, project.id, excluded_paths=self.excluded_paths)
+        workspace = self._build_workspace(project)
         if self.config_path:
             save_config(self.config_path, new)
         self.settings = new
         self.workspaces[project.id] = workspace
+
+    def update_project_policy(self, project_id: str, data: dict):
+        allowed = {
+            "mode", "paused", "apply_local_enabled", "share_editor_buffers", "exclude_paths"
+        }
+        if set(data) - allowed:
+            raise ValueError("Unknown project policy field")
+        self.workspace(project_id)
+        current = next(project for project in self.settings.projects if project.id == project_id)
+        updated = Project.model_validate({**current.model_dump(), **data})
+        projects = [updated if project.id == project_id else project for project in self.settings.projects]
+        new = Settings.model_validate(self.settings.model_copy(update={"projects": projects}).model_dump())
+        if self.config_path:
+            save_config(self.config_path, new)
+        self.settings = new
+        self.workspaces[project_id] = self._build_workspace(updated)
 
     def remove_project(self, project_id: str):
         self.workspace(project_id)
@@ -119,6 +156,16 @@ def create_mcp(runtime: Runtime) -> FastMCP:
         return await invoke(project_id, "read_file", path=path, start_line=start_line, end_line=end_line)
 
     @mcp.tool(annotations=annotation)
+    async def read_files(project_id: str, requests: list[dict]) -> dict:
+        """Read up to ten saved text ranges with per-item errors and one total byte budget."""
+        return await invoke(project_id, "read_files", requests=requests)
+
+    @mcp.tool(annotations=annotation)
+    async def preview_scope(project_id: str) -> dict:
+        """Preview current accessible file counts and exclusions without caching authorization."""
+        return await invoke(project_id, "preview_scope")
+
+    @mcp.tool(annotations=annotation)
     async def git_status(project_id: str) -> dict:
         """List allowed tracked changes and untracked files; redact excluded paths."""
         return await invoke(project_id, "git_status")
@@ -131,8 +178,9 @@ def create_mcp(runtime: Runtime) -> FastMCP:
     @mcp.tool(annotations=annotation)
     def list_editor_sessions(project_id: str) -> list[dict]:
         """List live editor snapshot IDs. Never silently choose a different window."""
-        runtime.workspace(project_id)
-        return runtime.contexts.list(project_id)
+        workspace = runtime.workspace(project_id)
+        return [item for item in runtime.contexts.list(project_id)
+                if workspace.policy.allows_editor_buffer(item["path"])]
 
     @mcp.tool(annotations=annotation)
     def get_editor_context(project_id: str, session_id: str) -> dict:
@@ -140,6 +188,8 @@ def create_mcp(runtime: Runtime) -> FastMCP:
         try:
             workspace = runtime.workspace(project_id)
             snapshot = runtime.contexts.get(project_id, session_id)
+            if not workspace.policy.allows_editor_buffer(snapshot["path"]):
+                raise PermissionError("editor buffers are not enabled for this project")
             workspace.resolve_file(snapshot["path"])
             return snapshot
         except (ValueError, PermissionError, FileNotFoundError) as exc:

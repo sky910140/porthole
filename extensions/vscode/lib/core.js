@@ -50,6 +50,13 @@ function validateProjectBinding(status, projectId, workspaceRoot) {
   return project;
 }
 
+function requireEditorBufferSharing(project) {
+  if (!project || project.share_editor_buffers !== true) {
+    throw new Error('项目尚未允许共享未保存内容。请在本机管理页为该项目开启“共享未保存内容”。');
+  }
+  return project;
+}
+
 function buildContextPayload(input) {
   if (!input.projectId || !input.sessionId) throw new Error('缺少项目 ID 或编辑器会话 ID。');
   if (Buffer.byteLength(input.text, 'utf8') > MAX_TEXT_BYTES) throw new Error('当前文件超过 1 MiB，未发送。');
@@ -122,5 +129,6 @@ module.exports = {
   buildContextPayload,
   normalizeServiceUrl,
   relativeWorkspacePath,
+  requireEditorBufferSharing,
   validateProjectBinding,
 };

@@ -27,6 +27,10 @@ def test_workspace_info_and_file_listing_are_bounded_and_filter_secrets(tmp_path
         "files": [{"path": "src/app.py", "size": 13}],
         "offset": 0,
         "limit": 1,
+        "source": "disk",
+        "has_more": False,
+        "next_offset": None,
+        "truncation_reason": None,
         "truncated": False,
     }
 
@@ -138,6 +142,55 @@ def test_list_files_reports_scan_truncation(monkeypatch: pytest.MonkeyPatch, tmp
 
     assert len(result["files"]) == 2
     assert result["truncated"] is True
+    assert result["has_more"] is False
+    assert result["next_offset"] is None
+    assert result["truncation_reason"] == "scan_limit"
+
+
+def test_list_files_distinguishes_next_page_from_scan_limit(tmp_path: Path) -> None:
+    for index in range(3):
+        (tmp_path / f"{index}.txt").write_text(str(index), encoding="utf8")
+    workspace = Workspace(tmp_path, "demo")
+    first = workspace.list_files(limit=2)
+    second = workspace.list_files(limit=2, offset=first["next_offset"])
+    assert first["has_more"] is True
+    assert first["truncation_reason"] == "page_limit"
+    assert first["next_offset"] == 2
+    assert [item["path"] for item in second["files"]] == ["2.txt"]
+    assert second["has_more"] is False
+
+
+def test_read_files_is_independent_per_item_and_has_total_budget(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("alpha\n", encoding="utf8")
+    (tmp_path / "b.txt").write_text("beta\n", encoding="utf8")
+    (tmp_path / ".env").write_text("secret", encoding="utf8")
+    workspace = Workspace(tmp_path, "demo")
+    result = workspace.read_files([
+        {"path": "a.txt", "start_line": 1, "end_line": 10},
+        {"path": ".env"},
+        {"path": "missing.txt"},
+    ])
+    assert result["results"][0]["ok"] is True
+    assert result["results"][1]["error"]["code"] == "PATH_FORBIDDEN"
+    assert result["results"][2]["error"]["code"] == "PATH_FORBIDDEN"
+
+    monkeypatch.setattr("project_mcp.workspace.MAX_BATCH_READ_BYTES", 5)
+    limited = workspace.read_files([{"path": "a.txt"}, {"path": "b.txt"}])
+    assert limited["results"][1]["error"]["code"] == "QUOTA_EXCEEDED"
+
+
+def test_scope_preview_reports_exclusions_without_caching_authorization(tmp_path: Path) -> None:
+    from project_mcp.policy import ProjectPolicy
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("ok", encoding="utf8")
+    (tmp_path / ".env").write_text("secret", encoding="utf8")
+    policy = ProjectPolicy(exclude_paths=["src/private/**"])
+    workspace = Workspace(tmp_path, "demo", policy=policy)
+    preview = workspace.preview_scope()
+    assert preview["accessible_files"] == 1
+    assert preview["excluded_by_reason"]["sensitive_path"] >= 1
+    assert preview["scan_complete"] is True
 
 
 def test_custom_excluded_paths_are_hidden_from_every_workspace_tool(tmp_path: Path) -> None:

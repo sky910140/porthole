@@ -16,6 +16,47 @@ function item(text, action, label) {
   if (action) { const button = document.createElement('button'); button.className = 'secondary'; button.textContent = label; button.onclick = () => run(button, action); li.append(button); }
   return li;
 }
+function actionButton(label, operation, danger = false) {
+  const button = document.createElement('button');
+  button.className = danger ? 'secondary danger' : 'secondary';
+  button.textContent = label;
+  button.onclick = () => run(button, operation);
+  return button;
+}
+function projectItem(project) {
+  const li = document.createElement('li'); li.className = 'project-item';
+  const summary = document.createElement('div'); summary.className = 'project-summary';
+  const title = document.createElement('strong'); title.textContent = `${project.name} · ${project.id}`;
+  const facts = document.createElement('div'); facts.className = 'project-facts';
+  const mode = document.createElement('span'); mode.className = 'badge';
+  mode.textContent = project.paused ? '已暂停' : project.mode === 'propose' ? '允许提出修改' : '仅查看代码';
+  const buffers = document.createElement('span');
+  buffers.textContent = `未保存内容：${project.share_editor_buffers ? '共享' : '不共享'}`;
+  const apply = document.createElement('span');
+  apply.textContent = `本机应用：${project.apply_local_enabled ? '已授权' : '未授权'}`;
+  facts.append(mode, buffers, apply); summary.append(title, facts);
+  const actions = document.createElement('div'); actions.className = 'project-actions';
+  actions.append(
+    actionButton(project.mode === 'propose' ? '改为仅查看代码' : '允许提出修改', async () => {
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', {mode: project.mode === 'propose' ? 'read_only' : 'propose'});
+      await refresh(); message('项目模式已更新。');
+    }),
+    actionButton(project.share_editor_buffers ? '停止共享未保存内容' : '共享未保存内容', async () => {
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', {share_editor_buffers: !project.share_editor_buffers});
+      await refresh(); message(project.share_editor_buffers ? '已停止共享未保存内容。' : '已允许插件共享未保存内容、选区和诊断。');
+    }),
+    actionButton(project.paused ? '继续访问' : '暂停访问', async () => {
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'PATCH', {paused: !project.paused});
+      await refresh(); message(project.paused ? '项目访问已恢复。' : '项目访问已暂停。');
+    }),
+    actionButton('移除授权', async () => {
+      if (!confirm(`移除 ${project.id} 的 AI 访问授权？项目文件不会删除。`)) return;
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, 'DELETE');
+      await refresh(); message('已移除项目授权。');
+    }, true),
+  );
+  li.append(summary, actions); return li;
+}
 const healthLabels = {
   local_service: '本机服务', transport: '公网通道', oauth: '账号授权', tool_call: '真实工具调用',
 };
@@ -25,10 +66,7 @@ const stateLabels = {
 async function refresh() {
   const state = await api('/api/status');
   el('workspace').hidden = false; el('connection').textContent = '本机已连接';
-  el('projects').replaceChildren(...state.projects.map(p => item(`${p.name} · ${p.id}`, async () => {
-    if (!confirm(`移除 ${p.id} 的 AI 访问授权？项目文件不会删除。`)) return;
-    await api(`/api/projects/${encodeURIComponent(p.id)}`, 'DELETE'); await refresh(); message('已移除项目授权。');
-  }, '移除授权')));
+  el('projects').replaceChildren(...state.projects.map(projectItem));
   if (!state.projects.length) el('projects').append(item('尚未登记项目。'));
   el('sessions').replaceChildren(...state.sessions.map(s => item(`${s.project_id} / ${s.path} · ${s.session_id}`, async () => {
     await api(`/api/context/${encodeURIComponent(s.session_id)}`, 'DELETE'); await refresh(); message('已清除编辑器快照。');

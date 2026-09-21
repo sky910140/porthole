@@ -12,6 +12,7 @@ const {
   buildContextPayload,
   normalizeServiceUrl,
   relativeWorkspacePath,
+  requireEditorBufferSharing,
   validateProjectBinding,
 } = require('./lib/core');
 const { ServiceManager } = require('./lib/service-manager');
@@ -131,7 +132,10 @@ async function publishActiveContext(options = {}) {
     const attempt = { ...connection, sessionId: sessionFor(folder), promise: null };
     trackAttempt(bindingKey, attempt);
     attempt.promise = (async () => {
-      validateProjectBinding(await connection.client.getStatus(), projectId, folder.uri.fsPath);
+      const project = validateProjectBinding(
+        await connection.client.getStatus(), projectId, folder.uri.fsPath,
+      );
+      requireEditorBufferSharing(project);
       if (globalClosing || clearingKeys.has(bindingKey) || generation !== generationFor(bindingKey)) return false;
       await connection.client.putContext(payload);
       return true;

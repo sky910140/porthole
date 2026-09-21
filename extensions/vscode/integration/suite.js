@@ -17,8 +17,8 @@ async function run() {
   assert.equal(folders.length, 2);
   const [folderA, folderB] = folders;
   const projects = [
-    { id: 'project-a', name: 'Project A', root: folderA.uri.fsPath },
-    { id: 'project-b', name: 'Project B', root: folderB.uri.fsPath },
+    { id: 'project-a', name: 'Project A', root: folderA.uri.fsPath, share_editor_buffers: true },
+    { id: 'project-b', name: 'Project B', root: folderB.uri.fsPath, share_editor_buffers: true },
   ];
   const requests = [];
   const serverSessions = new Map();

@@ -10,7 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 PROTOCOL_VERSION = "1.0.0"
 SERVICE_VERSION = "0.2.0"
-CAPABILITIES = ["layered_health", "verification_challenge", "bounded_reads"]
+CAPABILITIES = [
+    "layered_health",
+    "verification_challenge",
+    "bounded_reads",
+    "project_policy",
+    "batch_reads",
+    "scope_preview",
+]
 
 CheckState = Literal["unknown", "checking", "ok", "failed", "expired"]
 HealthLayer = Literal["local_service", "transport", "oauth", "tool_call"]

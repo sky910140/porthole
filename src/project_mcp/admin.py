@@ -85,7 +85,16 @@ def create_app(runtime):
             async with runtime.limits.status.slot():
                 runtime.health.record("local_service", "ok")
                 s = runtime.settings
-                projects = [{"id": p.id, "name": p.name or p.id, "root": str(p.root)}
+                projects = [{
+                    "id": p.id,
+                    "name": p.name or p.id,
+                    "root": str(p.root),
+                    "mode": p.mode,
+                    "paused": p.paused,
+                    "apply_local_enabled": p.apply_local_enabled,
+                    "share_editor_buffers": p.share_editor_buffers,
+                    "exclude_paths": p.exclude_paths,
+                }
                             for p in s.projects]
                 health_state = runtime.health.snapshot()
                 return JSONResponse({
@@ -122,6 +131,10 @@ def create_app(runtime):
                 runtime.update_project(await body(request))
             elif path.startswith("/api/projects/") and request.method == "DELETE":
                 runtime.remove_project(request.path_params["project_id"])
+            elif path.startswith("/api/projects/") and request.method == "PATCH":
+                runtime.update_project_policy(
+                    request.path_params["project_id"], await body(request)
+                )
             elif path == "/api/context" and request.method == "PUT":
                 data = await body(request)
                 workspace = runtime.workspace(data.get("project_id", ""))
@@ -151,7 +164,7 @@ def create_app(runtime):
         Route("/api/pair", action, methods=["POST"]),
         Route("/api/status", status), Route("/api/projects", action, methods=["PUT"]),
         Route("/api/shutdown", action, methods=["POST"]),
-        Route("/api/projects/{project_id}", action, methods=["DELETE"]),
+        Route("/api/projects/{project_id}", action, methods=["DELETE", "PATCH"]),
         Route("/api/context", action, methods=["PUT"]),
         Route("/api/context/{session_id}", action, methods=["DELETE"]),
         Route("/api/verification-challenges", action, methods=["POST"]),

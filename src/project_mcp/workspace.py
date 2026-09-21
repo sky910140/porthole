@@ -8,53 +8,20 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .git_read import GitReader
+from .policy import ProjectPolicy, sensitive_path
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_SCAN_FILES = 10_000
 MAX_LINE_LENGTH = 4_000
 MAX_SEARCH_BYTES = 32 * 1024 * 1024
 MAX_SEARCH_SECONDS = 3.0
+MAX_BATCH_READ_BYTES = 2 * 1024 * 1024
 
-_EXCLUDED_NAMES = {
-    ".git",
-    ".env",
-    ".local",
-    ".ssh",
-    ".codex",
-    ".agents",
-    ".venv",
-    "node_modules",
-    "build",
-    "dist",
-    "credentials",
-    "credentials.json",
-    "privatekey",
-    "privatekeys",
-    "tokens.json",
-}
-_SECRET_EXTENSIONS = {".pem", ".key", ".p12", ".pfx"}
 _DEVICE_NAMES = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
 
 
 def is_excluded_relative(path: str | PurePosixPath) -> bool:
-    parts = PurePosixPath(str(path).replace("\\", "/")).parts
-    lowered_path = "/".join(part.lower() for part in parts)
-    if lowered_path == "config/local.json" or lowered_path.endswith("/config/local.json"):
-        return True
-    for part in parts:
-        lowered = part.lower()
-        stem = lowered.split(".", 1)[0]
-        normalized = lowered.replace("_", "").replace("-", "").replace(" ", "")
-        if lowered in _EXCLUDED_NAMES or lowered.startswith(".env."):
-            return True
-        if (
-            "credential" in lowered
-            or "privatekey" in normalized
-            or stem in {"id_rsa", "id_ed25519"}
-            or PurePosixPath(lowered).suffix in _SECRET_EXTENSIONS
-        ):
-            return True
-    return False
+    return sensitive_path(path)
 
 
 class Workspace:
@@ -63,6 +30,7 @@ class Workspace:
         root: Path,
         project_id: str,
         excluded_paths: Iterable[str | Path] = (),
+        policy: ProjectPolicy | None = None,
     ) -> None:
         root = Path(root)
         if not project_id or not project_id.strip():
@@ -84,7 +52,9 @@ class Workspace:
             except (OSError, ValueError):
                 continue
             custom_exclusions.append(PurePosixPath(relative.as_posix()))
-        self._excluded_paths = tuple(custom_exclusions)
+        self.policy = (policy or ProjectPolicy()).with_additional_exclusions(
+            [item.as_posix() for item in custom_exclusions]
+        )
         self._git = GitReader(self.root, project_id, self._is_excluded)
 
     @staticmethod
@@ -99,13 +69,7 @@ class Workspace:
 
     def _is_excluded(self, path: str | PurePosixPath) -> bool:
         relative = PurePosixPath(str(path).replace("\\", "/"))
-        if is_excluded_relative(relative):
-            return True
-        lowered = tuple(part.lower() for part in relative.parts)
-        return any(
-            lowered[: len(excluded.parts)] == tuple(part.lower() for part in excluded.parts)
-            for excluded in self._excluded_paths
-        )
+        return not self.policy.allows(relative, "read")
 
     def workspace_info(self) -> dict[str, object]:
         return {"project_id": self.project_id, "root": ".", **self._git.info()}
@@ -161,7 +125,10 @@ class Workspace:
             raise ValueError("path is not a regular file")
         return candidate
 
-    def resolve_file(self, path: str) -> Path:
+    def resolve_file(self, path: str, capability: str = "read") -> Path:
+        relative = self._validate_relative(path, allow_dot=False)
+        if not self.policy.allows(relative, capability):
+            raise PermissionError("path or capability is not allowed")
         return self._resolve(path, allow_dot=False, require_file=True)
 
     def _iter_files(self, base: Path, depth: int) -> tuple[Iterator[Path], list[bool]]:
@@ -173,7 +140,7 @@ class Workspace:
             while stack:
                 directory, level = stack.pop()
                 try:
-                    entries = sorted(os.scandir(directory), key=lambda entry: entry.name.lower(), reverse=True)
+                    entries = sorted(os.scandir(directory), key=lambda entry: entry.name.lower())
                 except (OSError, PermissionError):
                     continue
                 for entry in entries:
@@ -228,7 +195,20 @@ class Workspace:
             files.append({"path": file_path.relative_to(self.root).as_posix(), "size": size})
             eligible += 1
         relative = base.relative_to(self.root).as_posix() or "."
-        return {"project_id": self.project_id, "path": relative, "files": files, "offset": offset, "limit": limit, "truncated": has_more or scan_truncated[0]}
+        scan_limited = scan_truncated[0]
+        reason = "page_limit" if has_more else "scan_limit" if scan_limited else None
+        return {
+            "project_id": self.project_id,
+            "path": relative,
+            "files": files,
+            "offset": offset,
+            "limit": limit,
+            "source": "disk",
+            "has_more": has_more,
+            "next_offset": offset + len(files) if has_more else None,
+            "truncation_reason": reason,
+            "truncated": has_more or scan_limited,
+        }
 
     @staticmethod
     def _read_text(file_path: Path) -> tuple[str, os.stat_result]:
@@ -253,7 +233,66 @@ class Workspace:
         text, info = self._read_text(file_path)
         all_lines = text.splitlines()
         lines = [{"line": number, "text": all_lines[number - 1][:MAX_LINE_LENGTH]} for number in range(start_line, min(end_line, len(all_lines)) + 1)]
-        return {"project_id": self.project_id, "path": file_path.relative_to(self.root).as_posix(), "start_line": start_line, "end_line": end_line, "total_lines": len(all_lines), "lines": lines, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "mtime_ns": info.st_mtime_ns, "truncated": end_line < len(all_lines) or any(len(line) > MAX_LINE_LENGTH for line in all_lines[start_line - 1 : end_line])}
+        line_range_limited = end_line < len(all_lines)
+        line_length_limited = any(
+            len(line) > MAX_LINE_LENGTH for line in all_lines[start_line - 1 : end_line]
+        )
+        reason = "line_range" if line_range_limited else "line_length" if line_length_limited else None
+        return {
+            "project_id": self.project_id,
+            "path": file_path.relative_to(self.root).as_posix(),
+            "start_line": start_line,
+            "end_line": end_line,
+            "total_lines": len(all_lines),
+            "lines": lines,
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "mtime_ns": info.st_mtime_ns,
+            "source": "disk",
+            "has_more": line_range_limited,
+            "truncation_reason": reason,
+            "truncated": line_range_limited or line_length_limited,
+        }
+
+    def read_files(self, requests: list[dict]) -> dict[str, object]:
+        if not isinstance(requests, list) or not 1 <= len(requests) <= 10:
+            raise ValueError("requests must contain 1 to 10 entries")
+        results: list[dict[str, object]] = []
+        used = 0
+        for request in requests:
+            if used >= MAX_BATCH_READ_BYTES:
+                results.append({
+                    "ok": False,
+                    "error": {"code": "QUOTA_EXCEEDED", "message": "batch byte budget exhausted"},
+                })
+                continue
+            try:
+                if not isinstance(request, dict):
+                    raise TypeError("request must be an object")
+                value = self.read_file(
+                    request.get("path", ""),
+                    request.get("start_line", 1),
+                    request.get("end_line", 200),
+                )
+                size = sum(len(item["text"].encode("utf8")) for item in value["lines"])
+                if used + size > MAX_BATCH_READ_BYTES:
+                    results.append({
+                        "ok": False,
+                        "error": {"code": "QUOTA_EXCEEDED", "message": "batch byte budget exhausted"},
+                    })
+                    used = MAX_BATCH_READ_BYTES
+                    continue
+                used += size
+                results.append({"ok": True, "value": value})
+            except (TypeError, ValueError, PermissionError, FileNotFoundError) as exc:
+                code = "FILE_TOO_LARGE" if "too large" in str(exc) else "PATH_FORBIDDEN"
+                results.append({"ok": False, "error": {"code": code, "message": str(exc)}})
+        return {
+            "project_id": self.project_id,
+            "source": "disk",
+            "results": results,
+            "bytes_returned": used,
+            "byte_limit": MAX_BATCH_READ_BYTES,
+        }
 
     def search_code(self, query: str, path: str = ".", limit: int = 50) -> dict[str, object]:
         if not isinstance(query, str) or not query or len(query) > 500 or "\x00" in query:
@@ -289,7 +328,75 @@ class Workspace:
                     matches.append({"path": file_path.relative_to(self.root).as_posix(), "line": number, "text": line[:MAX_LINE_LENGTH]})
             if has_more:
                 break
-        return {"project_id": self.project_id, "query": query, "path": base.relative_to(self.root).as_posix() or ".", "matches": matches, "limit": limit, "truncated": has_more or scan_truncated[0]}
+        scan_limited = scan_truncated[0]
+        reason = "result_limit" if has_more else "scan_limit" if scan_limited else None
+        return {
+            "project_id": self.project_id,
+            "query": query,
+            "path": base.relative_to(self.root).as_posix() or ".",
+            "matches": matches,
+            "limit": limit,
+            "source": "disk",
+            "has_more": has_more,
+            "truncation_reason": reason,
+            "truncated": has_more or scan_limited,
+        }
+
+    def preview_scope(self) -> dict[str, object]:
+        accessible = 0
+        scanned = 0
+        complete = True
+        excluded: dict[str, int] = {}
+        stack = [self.root]
+        while stack:
+            directory = stack.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except (OSError, PermissionError):
+                excluded["unavailable"] = excluded.get("unavailable", 0) + 1
+                continue
+            for entry in entries:
+                if scanned >= MAX_SCAN_FILES:
+                    complete = False
+                    stack.clear()
+                    break
+                scanned += 1
+                relative = Path(entry.path).relative_to(self.root).as_posix()
+                reason = self.policy.exclusion_reason(relative)
+                if entry.is_symlink():
+                    reason = "link_or_reparse"
+                else:
+                    try:
+                        attrs = entry.stat(follow_symlinks=False).st_file_attributes
+                    except AttributeError:
+                        attrs = 0
+                    except OSError:
+                        reason = "unavailable"
+                        attrs = 0
+                    if attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                        reason = "link_or_reparse"
+                if reason:
+                    excluded[reason] = excluded.get(reason, 0) + 1
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    try:
+                        if entry.stat(follow_symlinks=False).st_size > MAX_FILE_BYTES:
+                            excluded["file_too_large"] = excluded.get("file_too_large", 0) + 1
+                        else:
+                            accessible += 1
+                    except OSError:
+                        excluded["unavailable"] = excluded.get("unavailable", 0) + 1
+        return {
+            "project_id": self.project_id,
+            "policy_version": self.policy.version,
+            "accessible_files": accessible,
+            "excluded_by_reason": excluded,
+            "entries_scanned": scanned,
+            "scan_complete": complete,
+            "truncation_reason": None if complete else "scan_limit",
+        }
 
     def git_status(self) -> dict[str, object]:
         return self._git.status()
