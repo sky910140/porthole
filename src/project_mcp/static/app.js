@@ -63,6 +63,14 @@ const healthLabels = {
 const stateLabels = {
   unknown: '尚未验证', checking: '验证中', ok: '正常', failed: '失败', expired: '结果已过期',
 };
+function showPage(target) {
+  document.querySelectorAll('[data-page]').forEach(page => { page.hidden = page.id !== target; });
+  document.querySelectorAll('#main-nav button').forEach(button => {
+    if (button.dataset.target === target) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  document.getElementById(target).querySelector('h2').focus({preventScroll: true});
+}
 async function refresh() {
   const state = await api('/api/status');
   el('workspace').hidden = false; el('connection').textContent = '本机已连接';
@@ -87,6 +95,11 @@ el('connect-form').onsubmit = event => {
   run(event.submitter, async () => { await refresh(); message('已连接。'); });
 };
 el('disconnect').onclick = () => { token = ''; el('workspace').hidden = true; el('projects').replaceChildren(); el('sessions').replaceChildren(); el('connection').textContent = '未连接'; message('已清除页面中的令牌。'); };
+document.querySelectorAll('#main-nav button').forEach(button => { button.onclick = () => showPage(button.dataset.target); });
+el('show-demo').onclick = () => {
+  const demo = el('demo'); demo.hidden = !demo.hidden;
+  el('show-demo').textContent = demo.hidden ? '查看离线演示' : '收起离线演示';
+};
 el('refresh').onclick = event => run(event.target, async () => { await refresh(); message('状态已更新。'); });
 el('project-form').onsubmit = event => {
   event.preventDefault(); const data = Object.fromEntries(new FormData(event.target));

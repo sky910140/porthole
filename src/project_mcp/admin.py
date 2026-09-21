@@ -103,6 +103,7 @@ def create_app(runtime):
                     "sessions": runtime.contexts.list(),
                     "config_id": runtime.config_id,
                     "auth_mode": s.auth_mode,
+                    "account_allowlist_configured": bool(s.github_user_ids),
                     "mcp_port": s.mcp_port,
                     "public_url": s.public_url,
                     "oauth_configured": s.auth_mode == "github",

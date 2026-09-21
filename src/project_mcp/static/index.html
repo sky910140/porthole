@@ -4,7 +4,7 @@
 <title>本地项目助手</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
 <body><main>
 <header><div><p class="eyebrow">LOCAL PROJECT ASSISTANT</p><h1>本地项目助手</h1>
-<p>把项目上下文交给你正在使用的 AI。项目文件保持只读。</p></div><span id="connection" class="badge">未连接</span></header>
+<p>把明确授权的项目上下文交给你正在使用的 AI。</p></div><span id="connection" class="badge">未连接</span></header>
 <section aria-labelledby="auth-title"><h2 id="auth-title">连接本机服务</h2>
 <p>输入本机访问令牌。令牌只保留在当前页面内存中，刷新后需要重新输入。</p>
 <form id="connect-form"><label for="token">本机访问令牌</label><div class="row"><input id="token" type="password" required autocomplete="off" placeholder="粘贴 admin 令牌"><button type="submit">连接</button><button type="button" id="disconnect" class="secondary">断开</button></div></form>
@@ -12,17 +12,33 @@
 </section>
 <p id="message" role="status" aria-live="polite"></p>
 <div id="workspace" hidden>
-<section><div class="section-heading"><h2>已授权项目</h2><button id="refresh" class="secondary">刷新状态</button></div>
-<p>AI 只能访问这里登记的项目。新项目默认“仅查看代码”。“允许提出修改”只允许创建待审阅修改单，不授权写入本机文件。</p><ul id="projects"></ul>
+<nav id="main-nav" aria-label="主要功能">
+<button type="button" data-target="projects-page" aria-current="page">项目首页</button>
+<button type="button" data-target="changes-page">待处理修改</button>
+<button type="button" data-target="settings-page">设置</button>
+<button type="button" data-target="diagnostics-page">诊断</button>
+</nav>
+<section id="projects-page" data-page aria-labelledby="projects-title">
+<div class="section-heading"><h2 id="projects-title" tabindex="-1">已授权项目</h2><button id="refresh" class="secondary">刷新状态</button></div>
+<p>新项目默认“仅查看代码”。“允许提出修改”只允许创建待审阅修改单，不授权写入本机文件。</p><ul id="projects"></ul>
+<button type="button" id="show-demo" class="secondary">查看离线演示</button>
+<div id="demo" class="demo" hidden><strong>演示数据，尚未连接 ChatGPT</strong>
+<p>固定示例：示例笔记工具（demo-notes）</p><ul><li>README.md</li><li>src/main.py</li><li>tests/test_main.py</li></ul>
+<p class="hint">演示不会读取本机项目，也不表示真实工具调用成功。</p></div>
+</section>
+<section id="changes-page" data-page hidden aria-labelledby="changes-title"><h2 id="changes-title" tabindex="-1">待处理修改</h2>
+<p>目前没有待处理修改。修改能力启用后，这里会区分“已收到建议”“已应用”和“未运行测试”。</p></section>
+<section id="settings-page" data-page hidden aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1">设置</h2>
 <details><summary>添加项目</summary><form id="project-form" class="grid">
 <label>项目标识<input name="id" required pattern="[A-Za-z0-9_-]{1,64}" placeholder="例如 backend"></label>
 <label>显示名称<input name="name" maxlength="100" placeholder="例如 后端服务"></label>
 <label class="wide">本机绝对路径<input name="root" required placeholder="例如 D:\workspace\my-project"></label>
-<button type="submit">授权此项目</button></form></details></section>
-<section><h2>编辑器上下文</h2><p>默认不共享未保存内容。开启后，插件可发布当前文件内容、选区和诊断；快照 15 分钟后过期，不会写入项目文件。</p><ul id="sessions"></ul></section>
-<section><h2>聊天连接</h2><p id="mode"></p><p id="endpoint"></p>
-<h3>连接状态</h3><ul id="health"></ul>
-<p class="hint">本地模式供开发和自测使用。连接 ChatGPT / Claude 网页需要固定 HTTPS 地址和 GitHub OAuth。真实账号登录及额度路径需要单独验收。</p>
+<button type="submit">授权此项目</button></form></details>
+<h3>编辑器上下文</h3><p>默认不共享未保存内容。开启后，插件可发布当前文件内容、选区和诊断；快照 15 分钟后过期，不会写入项目文件。</p><ul id="sessions"></ul>
+</section>
+<section id="diagnostics-page" data-page hidden aria-labelledby="diagnostics-title"><h2 id="diagnostics-title" tabindex="-1">设置与诊断</h2>
+<p id="mode"></p><p id="endpoint"></p><h3>连接状态</h3><ul id="health"></ul>
+<p class="hint">本地模式供开发和自测使用。连接 ChatGPT 网页需要固定 HTTPS 地址和 GitHub OAuth。真实账号登录及额度路径需要单独验收。</p>
 <div class="links"><a href="https://chatgpt.com" target="_blank" rel="noreferrer">打开 ChatGPT</a><a href="https://claude.ai" target="_blank" rel="noreferrer">打开 Claude</a></div></section>
 </div>
 <footer>代码与上下文会在调用工具时发送给对应 AI 服务。退出页面不会停止本机服务。</footer>

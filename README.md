@@ -10,6 +10,8 @@
 
 ## 快速开始（Windows）
 
+面向日常使用的流程见 [三步快速开始](docs/quickstart.md)：选择项目、连接、试着问一个问题。以下命令保留给源码开发和手动服务管理。
+
 需要 Python 3.11+；Git 功能还需要 Git。在本项目目录执行：
 
 ```powershell
@@ -33,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.2.0.vsix`。
 
-1. 打开已登记的项目目录。
+1. 打开已登记的项目目录，运行 `AI Zhagan: 开始或继续三步向导`；取消后可从原步骤继续。
 2. 使用受管理运行包时执行 `AI Zhagan: 启动并安全配对本机服务`，无需复制管理令牌；沿用手动服务时执行 `AI Zhagan: 配置连接`。
 3. 如需分享未保存内容，先在本机管理页为该项目开启“共享未保存内容”，再执行 `AI Zhagan: 发布当前编辑上下文`。令牌存入 VS Code SecretStorage。
 4. 执行 `AI Zhagan: 打开 ChatGPT / Claude`，使用 VS Code 集成浏览器；第三方登录需实际验证。
@@ -44,6 +46,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 每个项目默认使用“仅查看代码”模式，也可以在本机管理页切换为“允许提出修改”。后者只开放创建待审阅修改单的能力，不等于允许写入；本机应用授权单独管理。暂停项目会立即撤销文件、Git 和编辑器上下文访问。
 
 插件详细设置和测试见 [扩展说明](extensions/vscode/README.md)。其他 IDE 可以实现相同本地接口，详见 [适配协议](docs/adapter-api.md)。
+
+当前验证组合和未通过门禁见 [兼容性表](docs/compatibility.md)。
 
 ## MCP 工具
 

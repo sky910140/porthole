@@ -11,6 +11,7 @@
   "categories": ["Other"],
   "activationEvents": [
     "onCommand:aiZhagan.configure",
+    "onCommand:aiZhagan.onboarding",
     "onCommand:aiZhagan.pairManaged",
     "onCommand:aiZhagan.publishContext",
     "onCommand:aiZhagan.disconnect",
@@ -20,6 +21,7 @@
   "contributes": {
     "commands": [
       { "command": "aiZhagan.configure", "title": "AI Zhagan: 配置连接" },
+      { "command": "aiZhagan.onboarding", "title": "AI Zhagan: 开始或继续三步向导" },
       { "command": "aiZhagan.pairManaged", "title": "AI Zhagan: 启动并安全配对本机服务" },
       { "command": "aiZhagan.publishContext", "title": "AI Zhagan: 发布当前编辑上下文" },
       { "command": "aiZhagan.disconnect", "title": "AI Zhagan: 断开并清除上下文" },
@@ -60,7 +62,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node integration/run.js",
-    "check": "node --check extension.js && node --check lib/core.js && node --check lib/protocol.js && node --check lib/service-manager.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
+    "check": "node --check extension.js && node --check lib/core.js && node --check lib/onboarding.js && node --check lib/protocol.js && node --check lib/service-manager.js && node --check lib/view-state.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
     "package": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {

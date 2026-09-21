@@ -16,6 +16,11 @@ const {
   validateProjectBinding,
 } = require('./lib/core');
 const { ServiceManager } = require('./lib/service-manager');
+const {
+  buildQuestionPrompt,
+  runOnboarding,
+  validateSelfHostedStatus,
+} = require('./lib/onboarding');
 
 const execFileAsync = promisify(execFile);
 
@@ -229,8 +234,10 @@ function projectIdFor(folder) {
   return `workspace-${crypto.createHash('sha256').update(folder.uri.fsPath).digest('hex').slice(0, 12)}`;
 }
 
-async function pairManagedRuntime() {
-  const binding = activeBinding(true);
+async function pairManagedRuntime(selectedFolder = null) {
+  const binding = selectedFolder
+    ? { folder: selectedFolder, config: folderConfiguration(selectedFolder) }
+    : activeBinding(true);
   if (!binding) return;
   const paths = managedRuntimePaths();
   if (!fs.existsSync(paths.executable)) {
@@ -287,6 +294,98 @@ async function pairManagedRuntime() {
   await saveConnection(binding.folder, serviceUrl, project.id, credentials.admin_token);
   setStatus('已连接', `${binding.folder.name} → ${project.name || project.id}`);
   vscode.window.showInformationMessage('AI Zhagan 本机服务已启动并完成安全配对。');
+  return { serviceUrl, projectId: project.id, status, token: credentials.admin_token };
+}
+
+function onboardingFolder(value) {
+  return (vscode.workspace.workspaceFolders || []).find(
+    (folder) => folder.uri.toString() === value,
+  );
+}
+
+async function runVsCodeOnboarding() {
+  const stateKey = 'aiZhagan.onboarding.v1';
+  const result = await runOnboarding({
+    load: () => extensionContext.globalState.get(stateKey),
+    save: (state) => extensionContext.globalState.update(stateKey, state),
+    showPrerequisites: async () => {
+      const choice = await vscode.window.showInformationMessage(
+        '连接 ChatGPT 需要固定 HTTPS 地址、GitHub OAuth 和允许登录的账号。可以先完成本机项目配置，公网账号登录需由你本人操作。',
+        { modal: true }, '继续配置', '打开快速开始',
+      );
+      if (choice === '打开快速开始') {
+        await vscode.commands.executeCommand(
+          'vscode.open', vscode.Uri.file(path.join(extensionContext.extensionPath, 'README.md')),
+        );
+      }
+      return choice === '继续配置';
+    },
+    ensureRuntime: async () => {
+      const paths = managedRuntimePaths();
+      if (!fs.existsSync(paths.executable)) {
+        throw new Error(`尚未安装受管理运行包：${paths.executable}`);
+      }
+    },
+    listFolders: async () => (vscode.workspace.workspaceFolders || []).map((folder) => ({
+      id: folder.uri.toString(), label: folder.name, folder,
+    })),
+    chooseFolder: async (folders) => vscode.window.showQuickPick(folders, {
+      title: '第 1 步（共 3 步）：选择项目',
+      placeHolder: '明确选择要授权的工作区文件夹',
+    }),
+    connect: async ({ folder }) => pairManagedRuntime(folder),
+    isVerified: async (state) => {
+      const folder = onboardingFolder(state.folderId);
+      if (!folder) return false;
+      const connection = await connectionFor(folder, folderConfiguration(folder));
+      const status = await connection.client.getStatus();
+      return status.health && status.health.tool_call && status.health.tool_call.state === 'ok';
+    },
+    presentTryQuestion: async (state) => {
+      const folder = onboardingFolder(state.folderId);
+      if (!folder) throw new Error('先前选择的工作区文件夹已关闭，请重新运行向导。');
+      const connection = await connectionFor(folder, folderConfiguration(folder));
+      const status = await connection.client.getStatus();
+      const challenge = await connection.client.request(
+        'POST', '/api/verification-challenges', { project_id: state.projectId },
+      );
+      const endpoint = `${status.public_url || `http://127.0.0.1:${status.mcp_port}`}/mcp`;
+      const prompt = `请使用 AI Zhagan 调用 verify_connection，project_id=${state.projectId}，challenge_id=${challenge.challenge_id}。只返回工具实际结果。`;
+      const prerequisites = validateSelfHostedStatus(status);
+      const actions = [
+        { label: '复制 MCP 地址', value: 'endpoint' },
+        { label: '打开 ChatGPT', value: 'browser' },
+        { label: '复制验证提示词', value: 'prompt' },
+        { label: '查看连接详情', value: 'details' },
+        { label: '稍后继续', value: 'close' },
+      ];
+      while (true) {
+        const picked = await vscode.window.showQuickPick(actions, {
+          title: '第 3 步（共 3 步）：试着问一个问题',
+          placeHolder: '先复制地址和验证提示词，再由你在网页中完成调用',
+        });
+        if (!picked || picked.value === 'close') return;
+        if (picked.value === 'endpoint') await vscode.env.clipboard.writeText(endpoint);
+        if (picked.value === 'prompt') await vscode.env.clipboard.writeText(prompt);
+        if (picked.value === 'browser') await vscode.env.openExternal(vscode.Uri.parse('https://chatgpt.com/'));
+        if (picked.value === 'details') {
+          const text = prerequisites.ready
+            ? `公网接入前提已配置。验证挑战在 ${challenge.expires_at} 前有效。`
+            : `本机读取可继续；ChatGPT 自托管连接还缺少：${prerequisites.problems.join('、')}。`;
+          await vscode.window.showInformationMessage(text, { modal: true });
+        }
+      }
+    },
+  });
+  if (result.status === 'completed') {
+    const state = extensionContext.globalState.get(stateKey);
+    const prompt = buildQuestionPrompt(state.projectId, '.');
+    const action = await vscode.window.showInformationMessage(
+      '三步配置已完成，可以开始提问。', '复制提问模板',
+    );
+    if (action === '复制提问模板') await vscode.env.clipboard.writeText(prompt);
+  }
+  return result;
 }
 
 async function saveConnection(folder, serviceUrl, projectId, token) {
@@ -377,6 +476,18 @@ function activate(context) {
   context.subscriptions.push(
     statusBar,
     vscode.commands.registerCommand('aiZhagan.configure', configure),
+    vscode.commands.registerCommand('aiZhagan.onboarding', async () => {
+      try {
+        await runVsCodeOnboarding();
+      } catch (error) {
+        const choice = await vscode.window.showErrorMessage(
+          'AI Zhagan 向导暂时无法继续。', '查看错误详情',
+        );
+        if (choice === '查看错误详情') {
+          await vscode.window.showInformationMessage(String(error.message), { modal: true });
+        }
+      }
+    }),
     vscode.commands.registerCommand('aiZhagan.pairManaged', () => pairManagedRuntime().catch((error) => {
       vscode.window.showErrorMessage(`AI Zhagan：${error.message}`);
     })),
@@ -399,6 +510,7 @@ function activate(context) {
       disconnect,
       managedRuntimePaths,
       pairManagedRuntime,
+      runVsCodeOnboarding,
       getSessionId: sessionFor,
     };
   }
