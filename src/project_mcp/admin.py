@@ -152,6 +152,13 @@ def create_app(runtime):
                 project_id = data.get("project_id", "")
                 runtime.workspace(project_id)
                 return JSONResponse(runtime.health.create_challenge(project_id))
+            elif path == "/api/activity" and request.method == "GET":
+                return JSONResponse({"events": runtime.diagnostics.events(limit=100)})
+            elif path == "/api/diagnostics/preview" and request.method == "GET":
+                include_paths = request.query_params.get("include_paths") == "true"
+                return JSONResponse(runtime.diagnostics.preview_export(
+                    include_paths=include_paths,
+                ))
             elif path == "/api/changes" and request.method == "GET":
                 project_id = request.query_params.get("project_id")
                 if project_id is not None:
@@ -238,6 +245,8 @@ def create_app(runtime):
         Route("/api/context", action, methods=["PUT"]),
         Route("/api/context/{session_id}", action, methods=["DELETE"]),
         Route("/api/verification-challenges", action, methods=["POST"]),
+        Route("/api/activity", action, methods=["GET"]),
+        Route("/api/diagnostics/preview", action, methods=["GET"]),
         Route("/api/changes", action, methods=["GET"]),
         Route("/api/changes/{change_id}", action, methods=["GET"]),
         Route("/api/changes/{change_id}/readiness", action, methods=["POST"]),

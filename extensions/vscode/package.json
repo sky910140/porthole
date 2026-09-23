@@ -20,7 +20,8 @@
     "onCommand:aiZhagan.applyReviewedChange",
     "onCommand:aiZhagan.rejectChange",
     "onCommand:aiZhagan.revertChange",
-    "onCommand:aiZhagan.viewRecovery"
+    "onCommand:aiZhagan.viewRecovery",
+    "onCommand:aiZhagan.showActivity"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -35,7 +36,8 @@
       { "command": "aiZhagan.applyReviewedChange", "title": "AI Zhagan: 应用已审阅修改" },
       { "command": "aiZhagan.rejectChange", "title": "AI Zhagan: 拒绝修改建议" },
       { "command": "aiZhagan.revertChange", "title": "AI Zhagan: 撤销已应用修改" },
-      { "command": "aiZhagan.viewRecovery", "title": "AI Zhagan: 查看修改恢复状态" }
+      { "command": "aiZhagan.viewRecovery", "title": "AI Zhagan: 查看修改恢复状态" },
+      { "command": "aiZhagan.showActivity", "title": "AI Zhagan: 查看最近活动" }
     ],
     "configuration": {
       "title": "AI Zhagan",

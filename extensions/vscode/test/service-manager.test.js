@@ -9,6 +9,7 @@ const test = require('node:test');
 
 const {
   RestartPolicy,
+  ReconnectBackoff,
   ServiceManager,
   installVerifiedArtifact,
   validateManifest,
@@ -103,4 +104,39 @@ test('restart policy pauses after three crashes and network loss never requests 
   assert.equal(policy.canRestart(), true);
   policy.pause();
   assert.equal(policy.canRestart(), false);
+});
+
+test('reconnect backoff uses 1 2 4 8 16 30 seconds with bounded jitter', () => {
+  const exact = new ReconnectBackoff({ random: () => 0 });
+  assert.deepEqual(
+    Array.from({ length: 7 }, () => exact.nextDelayMs()),
+    [1000, 2000, 4000, 8000, 16000, 30000, 30000],
+  );
+  const jittered = new ReconnectBackoff({ random: () => 1 });
+  assert.deepEqual(
+    Array.from({ length: 6 }, () => jittered.nextDelayMs()),
+    [1200, 2400, 4800, 9600, 19200, 30000],
+  );
+});
+
+test('pause cancels scheduled reconnect and authentication failure stops retries', () => {
+  const timers = new Map(); let nextId = 1; let calls = 0;
+  const backoff = new ReconnectBackoff({
+    random: () => 0,
+    setTimer: (callback, delay) => { const id = nextId++; timers.set(id, { callback, delay }); return id; },
+    clearTimer: (id) => timers.delete(id),
+  });
+  const first = backoff.schedule(() => { calls += 1; });
+  assert.equal(timers.get(first).delay, 1000);
+  backoff.pause();
+  assert.equal(timers.size, 0);
+  assert.equal(backoff.schedule(() => {}), null);
+  backoff.resume();
+  const second = backoff.schedule(() => { calls += 1; });
+  timers.get(second).callback();
+  assert.equal(calls, 1);
+  backoff.authenticationFailed();
+  assert.equal(backoff.schedule(() => {}), null);
+  backoff.resetAfterWake();
+  assert.equal(backoff.nextDelayMs(), 1000);
 });

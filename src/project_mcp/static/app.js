@@ -107,7 +107,9 @@ function showPage(target) {
   document.getElementById(target).querySelector('h2').focus({preventScroll: true});
 }
 async function refresh() {
-  const state = await api('/api/status');
+  const [state, activity, preview] = await Promise.all([
+    api('/api/status'), api('/api/activity'), api('/api/diagnostics/preview'),
+  ]);
   el('workspace').hidden = false; el('connection').textContent = '本机已连接';
   el('projects').replaceChildren(...state.projects.map(projectItem));
   if (!state.projects.length) el('projects').append(item('尚未登记项目。'));
@@ -119,6 +121,12 @@ async function refresh() {
   el('endpoint').textContent = `MCP 地址：${state.public_url || `http://127.0.0.1:${state.mcp_port}`}/mcp`;
   el('health').replaceChildren(...Object.entries(state.health || {}).map(([layer, check]) =>
     item(`${healthLabels[layer] || layer}：${stateLabels[check.state] || check.state}${check.error_code ? ` · ${check.error_code}` : ''}`)));
+  const recent = (activity.events || []).slice(-20).reverse();
+  el('activity').replaceChildren(...recent.map(event => item(
+    `${event.event_type} · ${event.change_id || event.request_id || '无编号'} · ${event.error_code || '完成'} · ${event.duration_ms} ms`,
+  )));
+  if (!recent.length) el('activity').append(item('暂无修改活动。'));
+  el('diagnostics-preview').textContent = `包含：${preview.included.join('、')}。不包含：${preview.excluded.join('、')}。路径：${preview.path_policy}。`;
 }
 async function refreshChanges() {
   if (!token || changesInFlight) return;

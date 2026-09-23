@@ -17,7 +17,7 @@ const {
 } = require('./lib/core');
 const { ChangeActionRunner, createChangeClient } = require('./lib/changes');
 const { buildReadinessPayload } = require('./lib/readiness');
-const { ServiceManager } = require('./lib/service-manager');
+const { ReconnectBackoff, ServiceManager } = require('./lib/service-manager');
 const {
   buildQuestionPrompt,
   runOnboarding,
@@ -135,9 +135,28 @@ async function clearReview(key) {
   const review = changeReviews.get(key);
   if (!review) return;
   changeReviews.delete(key);
-  clearInterval(review.heartbeat);
+  clearTimeout(review.heartbeat);
+  review.reconnect.pause();
   for (const uri of review.virtualUris) virtualChangeContents.delete(uri.toString());
   try { await review.client.deleteReadiness(review.sessionId); } catch { /* Best effort during disconnect. */ }
+}
+
+function scheduleReviewHeartbeat(review, delay = 2000) {
+  clearTimeout(review.heartbeat);
+  review.heartbeat = setTimeout(async () => {
+    if (changeReviews.get(review.key) !== review) return;
+    try {
+      await publishReviewReadiness(review);
+      review.reconnect.resetAfterWake();
+      scheduleReviewHeartbeat(review);
+    } catch (error) {
+      if (error && (error.status === 401 || error.status === 403)) {
+        review.reconnect.authenticationFailed();
+        return;
+      }
+      review.reconnect.schedule(() => scheduleReviewHeartbeat(review, 0));
+    }
+  }, delay);
 }
 
 function virtualChangeUri(scheme, change, file) {
@@ -184,7 +203,7 @@ async function showChange(argument) {
   await clearReview(key);
   const review = {
     key, folder, client, change, sessionId: sessionFor(folder), virtualUris: [],
-    actions: null, heartbeat: null,
+    actions: null, heartbeat: null, reconnect: new ReconnectBackoff(),
   };
   review.actions = new ChangeActionRunner(client);
   changeReviews.set(key, review);
@@ -206,9 +225,7 @@ async function showChange(argument) {
       `${change.project_id} · ${file.path} · 修改建议`, { preview: false },
     );
   }
-  review.heartbeat = setInterval(() => {
-    publishReviewReadiness(review).catch(() => {});
-  }, 2000);
+  scheduleReviewHeartbeat(review);
   setStatus('待审阅', `${change.project_id} · ${change.change_id}`, 'aiZhagan.applyReviewedChange');
   vscode.window.showInformationMessage(
     `已打开 ${change.files.length} 个文件的修改差异。本地文件尚未改变。`,
@@ -275,6 +292,24 @@ async function viewRecovery(argument) {
     { modal: true },
   );
   return current;
+}
+
+async function showRecentActivity() {
+  const binding = activeBinding(true);
+  if (!binding) return;
+  const connection = await connectionFor(binding.folder, binding.config);
+  const result = await createChangeClient(connection.client).activity();
+  const events = (result.events || []).slice(-50).reverse();
+  if (!events.length) {
+    await vscode.window.showInformationMessage('当前没有修改活动记录。');
+    return [];
+  }
+  await vscode.window.showQuickPick(events.map((event) => ({
+    label: event.event_type,
+    description: event.change_id || event.request_id || '无编号',
+    detail: `${event.error_code || '完成'} · ${event.duration_ms} ms · ${event.recorded_at}`,
+  })), { title: 'AI Zhagan 最近活动', placeHolder: '活动记录不包含源码正文或令牌' });
+  return events;
 }
 
 function reportChangeError(error) {
@@ -724,6 +759,7 @@ function activate(context) {
     vscode.commands.registerCommand('aiZhagan.rejectChange', runChangeCommand(rejectReviewedChange)),
     vscode.commands.registerCommand('aiZhagan.revertChange', runChangeCommand(revertReviewedChange)),
     vscode.commands.registerCommand('aiZhagan.viewRecovery', runChangeCommand(viewRecovery)),
+    vscode.commands.registerCommand('aiZhagan.showActivity', runChangeCommand(showRecentActivity)),
     vscode.workspace.onDidChangeTextDocument((event) => {
       scheduleAutoSync(event.document);
       publishAllReviewReadiness();
@@ -753,6 +789,7 @@ function activate(context) {
       rejectReviewedChange,
       revertReviewedChange,
       viewRecovery,
+      showRecentActivity,
       publishReviewReadiness: (changeId) => publishReviewReadiness(reviewForChange(changeId)),
     };
   }

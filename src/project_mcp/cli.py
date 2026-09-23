@@ -133,11 +133,16 @@ def stop(settings, path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Local Project Assistant")
-    parser.add_argument("command", choices=["init", "serve", "start", "stop", "status", "doctor", "token", "pair"])
+    parser.add_argument("command", choices=[
+        "init", "serve", "start", "stop", "status", "doctor", "token", "pair",
+        "diagnostics-preview", "diagnostics-export",
+    ])
     parser.add_argument("--config", type=Path)
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--id", default="current")
     parser.add_argument("--kind", choices=["admin", "mcp"], default="admin")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--include-paths", action="store_true")
     args = parser.parse_args(argv)
     path = (args.config or default_config_path()).resolve()
     try:
@@ -199,6 +204,29 @@ def main(argv=None):
                 **result,
                 "service_url": f"http://127.0.0.1:{settings.admin_port}",
             }))
+        elif args.command in {"diagnostics-preview", "diagnostics-export"}:
+            from .diagnostics import Diagnostics
+            from .protocol import service_info
+
+            diagnostics = Diagnostics(
+                settings.state_dir / "diagnostics",
+                details_provider=lambda: {
+                    "service": service_info().model_dump(mode="json"),
+                    "projects": [
+                        {"id": project.id, "root": str(project.root)}
+                        for project in settings.projects
+                    ],
+                },
+            )
+            if args.command == "diagnostics-preview":
+                print(json.dumps(diagnostics.preview_export(
+                    include_paths=args.include_paths,
+                ), ensure_ascii=False, indent=2))
+            else:
+                target = (args.output or Path.cwd() / "ai-zhagan-diagnostics.zip").resolve()
+                print(diagnostics.export_diagnostics(
+                    target, include_paths=args.include_paths,
+                ))
         return 0
     except (ValueError, OSError, httpx.HTTPError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

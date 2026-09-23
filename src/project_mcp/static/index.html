@@ -39,6 +39,9 @@
 </section>
 <section id="diagnostics-page" data-page hidden aria-labelledby="diagnostics-title"><h2 id="diagnostics-title" tabindex="-1">设置与诊断</h2>
 <p id="mode"></p><p id="endpoint"></p><h3>连接状态</h3><ul id="health"></ul>
+<h3>最近活动</h3><ul id="activity"></ul>
+<h3>诊断导出范围</h3><p id="diagnostics-preview"></p>
+<p class="hint">确认范围后，在本机终端运行 <code>project-assistant diagnostics-export</code>。默认不包含绝对路径；只有显式添加 <code>--include-paths</code> 才包含项目路径。</p>
 <p class="hint">本地模式供开发和自测使用。连接 ChatGPT 网页需要固定 HTTPS 地址和 GitHub OAuth。真实账号登录及额度路径需要单独验收。</p>
 <div class="links"><a href="https://chatgpt.com" target="_blank" rel="noreferrer">打开 ChatGPT</a><a href="https://claude.ai" target="_blank" rel="noreferrer">打开 Claude</a></div></section>
 </div>

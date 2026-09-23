@@ -66,6 +66,48 @@ class RestartPolicy {
   resume() { this.paused = false; this.crashes = []; }
 }
 
+class ReconnectBackoff {
+  constructor({
+    random = Math.random,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+  } = {}) {
+    this.random = random;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
+    this.attempt = 0;
+    this.timer = null;
+    this.paused = false;
+    this.authBlocked = false;
+  }
+  nextDelayMs() {
+    const base = Math.min(30000, 1000 * (2 ** Math.min(this.attempt, 5)));
+    this.attempt += 1;
+    return Math.min(30000, Math.round(base * (1 + (0.2 * this.random()))));
+  }
+  schedule(callback) {
+    if (this.paused || this.authBlocked || this.timer !== null) return null;
+    const delay = this.nextDelayMs();
+    const timer = this.setTimer(() => {
+      if (this.timer !== timer) return;
+      this.timer = null;
+      if (!this.paused && !this.authBlocked) callback();
+    }, delay);
+    this.timer = timer;
+    return timer;
+  }
+  cancel() {
+    if (this.timer !== null) this.clearTimer(this.timer);
+    this.timer = null;
+  }
+  pause() { this.paused = true; this.cancel(); }
+  resume() { this.paused = false; }
+  authenticationFailed() { this.authBlocked = true; this.cancel(); }
+  resetAfterWake() {
+    this.cancel(); this.attempt = 0; this.paused = false; this.authBlocked = false;
+  }
+}
+
 class ServiceManager {
   constructor({ status, launch, allowExternal = false, runtimeRoot, loadManifest, download, extract, trustedOrigins = [] }) {
     this.status = status; this.launch = launch; this.allowExternal = allowExternal;
@@ -126,6 +168,6 @@ async function ensureService(options) {
 }
 
 module.exports = {
-  RestartPolicy, ServiceManager, ensureRuntime, ensureService,
+  ReconnectBackoff, RestartPolicy, ServiceManager, ensureRuntime, ensureService,
   installVerifiedArtifact, validateManifest,
 };

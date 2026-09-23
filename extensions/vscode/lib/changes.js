@@ -29,6 +29,8 @@ function createChangeClient(client) {
     recover: (changeId, payload) => client.request(
       'POST', `/api/changes/${encodeURIComponent(changeId)}/recovery`, payload,
     ),
+    activity: () => client.request('GET', '/api/activity'),
+    diagnosticsPreview: () => client.request('GET', '/api/diagnostics/preview'),
   };
 }
 

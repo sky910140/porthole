@@ -21,6 +21,7 @@ from .changes.store import (
 )
 from .config import Project, Settings, save_config
 from .context import ContextStore
+from .diagnostics import Diagnostics
 from .editor_readiness import EditorReadiness
 from .health import HealthRegistry
 from .pairing import PairingStore
@@ -52,10 +53,16 @@ class Runtime:
         self.config_id = hashlib.sha256(str(config_path.resolve() if config_path else "memory").encode()).hexdigest()
         self.excluded_paths = [p for p in (settings.state_dir, config_path) if p is not None]
         self.workspaces = {p.id: self._build_workspace(p) for p in settings.projects}
+        self.diagnostics = Diagnostics(
+            self.state_dir / "diagnostics", details_provider=self._diagnostic_details,
+        )
         self._change_store = change_store
         self.editor_readiness = editor_readiness or EditorReadiness()
         self._change_service = (
-            ChangeService(self.workspace, change_store, readiness=self.editor_readiness)
+            ChangeService(
+                self.workspace, change_store, readiness=self.editor_readiness,
+                diagnostics=self.diagnostics,
+            )
             if change_store else None
         )
 
@@ -73,6 +80,18 @@ class Runtime:
             excluded_paths=self.excluded_paths,
             policy=policy,
         )
+
+    def _diagnostic_details(self) -> dict:
+        from .protocol import service_info
+
+        return {
+            "service": service_info().model_dump(mode="json"),
+            "health": self.health.snapshot(),
+            "projects": [
+                {"id": project.id, "root": str(project.root)}
+                for project in self.settings.projects
+            ],
+        }
 
     def workspace(self, project_id: str):
         if project_id not in self.workspaces:
@@ -138,6 +157,7 @@ class Runtime:
         self._change_store = ChangeStore(self.state_dir / "changes" / "changes.db", content)
         self._change_service = ChangeService(
             self.workspace, self._change_store, readiness=self.editor_readiness,
+            diagnostics=self.diagnostics,
         )
         return self._change_service
 

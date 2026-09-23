@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -24,11 +25,44 @@ class ChangeService:
         *,
         max_diff_bytes: int = 256 * 1024,
         readiness: EditorReadiness | None = None,
+        diagnostics=None,
     ) -> None:
         self.workspace = workspace
         self.store = store
         self.max_diff_bytes = max_diff_bytes
         self.readiness = readiness
+        self.diagnostics = diagnostics
+
+    def _record(
+        self,
+        event_type: str,
+        started: float,
+        *,
+        request_id: str | None = None,
+        change_id: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        if self.diagnostics is None:
+            return
+        safe_request = None
+        if request_id:
+            safe_request = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:16]
+        health = {
+            layer: check["state"] for layer, check in self.diagnostics.details_provider().get(
+                "health", {},
+            ).items()
+        }
+        try:
+            self.diagnostics.record_event({
+                "event_type": event_type,
+                "request_id": safe_request,
+                "change_id": change_id,
+                "error_code": error_code,
+                "duration_ms": max(0, int((time.perf_counter() - started) * 1000)),
+                "health": health,
+            })
+        except (OSError, ValueError):
+            pass
 
     @staticmethod
     def _allowed(workspace, path: str, capability: str) -> None:
@@ -40,19 +74,26 @@ class ChangeService:
         workspace._resolve(path, allow_dot=False)
 
     def submit(self, actor_id: str, request: ChangeRequest | dict) -> dict:
+        started = time.perf_counter()
         value = request if isinstance(request, ChangeRequest) else ChangeRequest.model_validate(request)
         workspace = self.workspace(value.project_id)
         for item in value.files:
             self._allowed(workspace, item.path, "propose")
-        return {**self.store.create(actor_id, value), "local_files_changed": False}
+        result = {**self.store.create(actor_id, value), "local_files_changed": False}
+        self._record(
+            "change_submit", started, request_id=value.request_id,
+            change_id=result["change_id"],
+        )
+        return result
 
     def get(self, actor_id: str, project_id: str, change_id: str) -> dict:
+        started = time.perf_counter()
         workspace = self.workspace(project_id)
         result = self.store.get(actor_id, project_id, change_id)
         files = self.store.files(actor_id, project_id, change_id)
         for item in files:
             self._allowed(workspace, item["path"], "read")
-        return {
+        result = {
             **result,
             "project_id": project_id,
             "files": [{
@@ -60,6 +101,8 @@ class ChangeService:
                 for key in ("path", "operation", "base_sha256", "content_sha256")
             } for item in files],
         }
+        self._record("change_query", started, change_id=change_id)
+        return result
 
     def diff(self, actor_id: str, project_id: str, change_id: str) -> dict:
         workspace = self.workspace(project_id)
@@ -226,6 +269,7 @@ class ChangeService:
         )
 
     def apply_reviewed(self, change_id: str, data: dict) -> dict:
+        started = time.perf_counter()
         if self.readiness is None:
             raise ReadinessBlocked("EDITOR_UNAVAILABLE", "editor readiness is not configured")
         operation_id = data.get("operation_id")
@@ -257,6 +301,10 @@ class ChangeService:
 
         def finish(result: dict) -> dict:
             self.store.finish_operation(operation_id, result)
+            self._record(
+                "change_apply", started, change_id=change_id,
+                error_code=result.get("error_code"),
+            )
             return result
 
         if record["revision"] != expected_revision or record["state"] != "pending_review":
@@ -306,6 +354,7 @@ class ChangeService:
         return finish(result)
 
     def reject(self, change_id: str, data: dict) -> dict:
+        started = time.perf_counter()
         operation_id = data.get("operation_id")
         expected_revision = data.get("expected_revision")
         if not isinstance(operation_id, str) or not operation_id:
@@ -331,9 +380,11 @@ class ChangeService:
             new_state="rejected", transaction_kind="reject",
         )
         self.store.finish_operation(operation_id, result)
+        self._record("change_reject", started, change_id=change_id)
         return result
 
     def revert(self, change_id: str, data: dict) -> dict:
+        started = time.perf_counter()
         operation_id = data.get("operation_id")
         expected_revision = data.get("expected_revision")
         session_id = data.get("review_session_id")
@@ -388,9 +439,14 @@ class ChangeService:
                 "blocked_reason": str(exc),
             }
         self.store.finish_operation(operation_id, result)
+        self._record(
+            "change_revert", started, change_id=change_id,
+            error_code=result.get("error_code"),
+        )
         return result
 
     def recover(self, change_id: str, data: dict) -> dict:
+        started = time.perf_counter()
         action = data.get("action")
         operation_id = data.get("operation_id")
         expected_revision = data.get("expected_revision")
@@ -455,4 +511,8 @@ class ChangeService:
                 "blocked_reason": str(exc),
             }
         self.store.finish_operation(operation_id, result)
+        self._record(
+            "change_recovery", started, change_id=change_id,
+            error_code=result.get("error_code"),
+        )
         return result
