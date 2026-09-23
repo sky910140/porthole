@@ -33,6 +33,16 @@ def test_server_command_supports_python_and_frozen_runtime(tmp_path):
     ]
 
 
+def test_upgrade_snapshot_id_is_validated_before_reading_paths(tmp_path):
+    result = invoke(
+        "upgrade-restore", "--config", tmp_path / "config.json",
+        "--runtime-dir", tmp_path / "runtime" / "current",
+        "--snapshot-id", "../outside",
+    )
+    assert result.returncode == 2
+    assert "invalid snapshot id" in result.stderr
+
+
 def test_init_preserves_existing_config_and_doctor(tmp_path):
     config = tmp_path / "local.json"
     r = invoke("init", "--config", config, "--project", tmp_path, "--id", "demo")

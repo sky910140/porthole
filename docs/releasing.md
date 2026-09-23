@@ -22,7 +22,7 @@ npm --prefix extensions/vscode run package
 
 ## 本机升级保护
 
-先停止本工具服务，记录实际配置、状态和运行包目录。升级命令只接受本机终端，不经远程 MCP 暴露。下面以默认状态目录为例，运行包目录按实际安装位置填写：
+先停止本工具服务，记录实际配置、状态和运行包目录。升级命令只接受本机终端，不经远程 MCP 暴露。为防止误操作用户项目，运行包目录必须是配置文件同级的 `runtime/current`。下面以默认状态目录为例：
 
 ```powershell
 .venv/Scripts/project-assistant.exe stop --config "$env:LOCALAPPDATA/AI Zhagan/config.json"

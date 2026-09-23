@@ -15,7 +15,7 @@ const {
   requireEditorBufferSharing,
   validateProjectBinding,
 } = require('./lib/core');
-const { ChangeActionRunner, createChangeClient } = require('./lib/changes');
+const { ChangeActionRunner, createChangeClient, reviewChoices } = require('./lib/changes');
 const { buildReadinessPayload } = require('./lib/readiness');
 const { ReconnectBackoff, ServiceManager } = require('./lib/service-manager');
 const {
@@ -192,10 +192,35 @@ async function configuredChange(changeId) {
 async function showChange(argument) {
   let changeId = changeIdFromArgument(argument);
   if (!changeId) {
-    changeId = await vscode.window.showInputBox({
-      title: '查看修改建议', prompt: '输入网页返回的修改编号',
-      validateInput: (value) => value.trim() ? null : '请输入修改编号。',
-    });
+    const groups = [];
+    for (const folder of vscode.workspace.workspaceFolders || []) {
+      const config = folderConfiguration(folder);
+      const projectId = config.get('projectId', '').trim();
+      if (!projectId) continue;
+      try {
+        const connection = await connectionFor(folder, config);
+        const history = await createChangeClient(connection.client).list(projectId);
+        groups.push({
+          projectId, folderName: folder.name,
+          changes: Array.isArray(history.changes) ? history.changes : [],
+        });
+      } catch { /* A disconnected folder cannot offer local history. */ }
+    }
+    const choices = reviewChoices(groups);
+    if (choices.length) {
+      const selected = await vscode.window.showQuickPick([
+        ...choices,
+        { label: '输入网页返回的修改编号…', description: '列表中没有时使用', changeId: null },
+      ], { title: '查看修改建议', placeHolder: '选择待审阅修改' });
+      if (!selected) return;
+      changeId = selected.changeId;
+    }
+    if (!changeId) {
+      changeId = await vscode.window.showInputBox({
+        title: '查看修改建议', prompt: '输入网页返回的修改编号',
+        validateInput: (value) => value.trim() ? null : '请输入修改编号。',
+      });
+    }
   }
   if (!changeId) return;
   const { folder, client, change } = await configuredChange(changeId.trim());

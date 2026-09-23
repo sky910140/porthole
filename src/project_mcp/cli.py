@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -157,6 +158,8 @@ def _upgrade_command(args, path: Path) -> None:
     else:
         if not args.snapshot_id:
             raise ValueError("--snapshot-id is required")
+        if not re.fullmatch(r"[0-9a-f]{32}", args.snapshot_id):
+            raise ValueError("invalid snapshot id")
         snapshot_config = state / "upgrade-snapshots" / args.snapshot_id / "config.json"
         raw = json.loads(snapshot_config.read_text(encoding="utf-8"))
     admin_port = int(raw.get("admin_port", 8766))

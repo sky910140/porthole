@@ -8,6 +8,7 @@ const {
   ChangeActionRunner,
   RevisionGate,
   createChangeClient,
+  reviewChoices,
 } = require('../lib/changes');
 const { buildReadinessPayload } = require('../lib/readiness');
 const { deriveViewState } = require('../lib/view-state');
@@ -76,4 +77,18 @@ test('every persisted change state has one understandable primary action', () =>
     assert.ok(view.label.length > 0);
     assert.ok(view.detail.length > 0);
   }
+});
+
+test('review picker shows only pending changes in the connected project', () => {
+  const choices = reviewChoices([{
+    projectId: 'demo', folderName: 'My project', changes: [
+      { change_id: 'one', project_id: 'demo', state: 'pending_review', summary: 'Update docs', updated_at: '2026-09-23T10:00:00Z' },
+      { change_id: 'two', project_id: 'demo', state: 'applied', summary: 'Done' },
+      { change_id: 'three', project_id: 'other', state: 'pending_review', summary: 'Wrong project' },
+    ],
+  }]);
+  assert.equal(choices.length, 1);
+  assert.equal(choices[0].changeId, 'one');
+  assert.match(choices[0].label, /Update docs/);
+  assert.match(choices[0].description, /My project/);
 });

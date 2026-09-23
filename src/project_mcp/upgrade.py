@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import uuid
@@ -53,6 +54,9 @@ class UpgradeManager:
         self.config_path = Path(config_path).resolve()
         self.state_dir = Path(state_dir).resolve()
         self.runtime_dir = Path(runtime_dir).resolve()
+        expected_runtime = self.config_path.parent / "runtime" / "current"
+        if self.runtime_dir != expected_runtime:
+            raise UpgradeError("managed runtime must be next to the configuration")
         self.content_store = content_store
         self.content_root = self.state_dir / "changes" / "content"
         self.is_running = is_running
@@ -140,7 +144,7 @@ class UpgradeManager:
             raise
 
     def _snapshot(self, snapshot_id: str) -> Path:
-        if not snapshot_id.isalnum() or len(snapshot_id) != 32:
+        if not re.fullmatch(r"[0-9a-f]{32}", snapshot_id):
             raise UpgradeError("invalid snapshot id")
         snapshot = self.snapshot_root / snapshot_id
         if not (snapshot / "manifest.json").is_file():

@@ -34,6 +34,20 @@ function createChangeClient(client) {
   };
 }
 
+function reviewChoices(groups) {
+  return groups.flatMap(({ projectId, folderName, changes }) =>
+    changes.filter((change) =>
+      change.state === 'pending_review' && change.project_id === projectId,
+    ).map((change) => ({
+      label: String(change.summary || '未命名修改建议').slice(0, 100),
+      description: `${folderName} · 待审阅`,
+      detail: `修改编号 ${change.change_id}`,
+      changeId: change.change_id,
+      updatedAt: change.updated_at || '',
+    })),
+  ).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
 class ChangeActionRunner {
   constructor(client, options = {}) {
     this.client = client;
@@ -102,4 +116,4 @@ class RevisionGate {
   }
 }
 
-module.exports = { ChangeActionRunner, RevisionGate, createChangeClient };
+module.exports = { ChangeActionRunner, RevisionGate, createChangeClient, reviewChoices };

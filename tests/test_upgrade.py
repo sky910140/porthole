@@ -29,8 +29,8 @@ def setup_upgrade(tmp_path):
     state = tmp_path / "state"
     content = ProtectedContentStore(state / "changes" / "content", MemoryKey())
     store = ChangeStore(state / "changes" / "changes.db", content)
-    runtime = tmp_path / "runtime"
-    runtime.mkdir()
+    runtime = tmp_path / "runtime" / "current"
+    runtime.mkdir(parents=True)
     (runtime / "ai-zhagan.exe").write_bytes(b"old-runtime")
     manager = UpgradeManager(config, state, runtime, content_store=content, is_running=lambda: False)
     return manager, store, content, config, root
@@ -174,3 +174,12 @@ def test_restore_drops_stale_wal_sidecars(tmp_path):
     manager.restore_snapshot(snapshot_id)
     assert not wal.exists()
     assert not shm.exists()
+
+
+def test_upgrade_rejects_runtime_path_outside_managed_directory(tmp_path):
+    manager, _store, content, config, _root = setup_upgrade(tmp_path)
+    unrelated = tmp_path / "project" / "runtime"
+    unrelated.mkdir()
+    with pytest.raises(UpgradeError, match="managed runtime"):
+        UpgradeManager(config, manager.state_dir, unrelated,
+                       content_store=content, is_running=lambda: False)
