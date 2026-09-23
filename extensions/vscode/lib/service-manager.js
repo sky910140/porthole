@@ -30,6 +30,7 @@ function installVerifiedArtifact(downloadPath, installPath, artifact, extract) {
   fs.mkdirSync(parent, { recursive: true });
   const staging = `${installPath}.staging-${process.pid}-${Date.now()}`;
   const backup = `${installPath}.backup-${process.pid}-${Date.now()}`;
+  const previous = `${installPath}.previous`;
   fs.rmSync(staging, { recursive: true, force: true });
   try {
     extract(downloadPath, staging);
@@ -40,7 +41,10 @@ function installVerifiedArtifact(downloadPath, installPath, artifact, extract) {
       if (fs.existsSync(backup)) fs.renameSync(backup, installPath);
       throw error;
     }
-    fs.rmSync(backup, { recursive: true, force: true });
+    if (fs.existsSync(backup)) {
+      fs.rmSync(previous, { recursive: true, force: true });
+      fs.renameSync(backup, previous);
+    }
   } catch (error) {
     fs.rmSync(staging, { recursive: true, force: true });
     throw error;

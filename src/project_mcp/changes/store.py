@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from .content import ProtectedContentStore, QuotaExceeded, StorageUnavailable
 from .models import ChangeRequest, ChangeResult, ChangeState, canonical_sha256, manifest_document
 
 UNRESOLVED_STATES = {"pending_review", "applying", "reverting", "recovery_required"}
+CHANGE_SCHEMA_VERSION = 1
 TERMINAL_WITH_CONTENT_EXPIRY = {
     "rejected", "expired", "conflict", "applied", "rolled_back", "reverted",
 }
@@ -57,8 +59,10 @@ def read_local_history(
         parameters = (project_id,)
     query += " ORDER BY updated_at DESC LIMIT ?"
     try:
-        with sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True) as connection:
+        with closing(sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)) as connection:
             connection.row_factory = sqlite3.Row
+            if connection.execute("PRAGMA user_version").fetchone()[0] > CHANGE_SCHEMA_VERSION:
+                raise StorageUnavailable("change database uses a newer schema")
             if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise StorageUnavailable("change database integrity check failed")
             rows = connection.execute(query, (*parameters, limit)).fetchall()
@@ -91,20 +95,27 @@ class ChangeStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         try:
             connection = sqlite3.connect(self.db_path, timeout=5, isolation_level=None)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA busy_timeout=5000")
-            return connection
         except sqlite3.DatabaseError as exc:
             raise StorageUnavailable("change database is unavailable") from exc
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         existed = self.db_path.exists() and self.db_path.stat().st_size > 0
         try:
             with self._connect() as connection:
+                if connection.execute("PRAGMA user_version").fetchone()[0] > CHANGE_SCHEMA_VERSION:
+                    raise StorageUnavailable("change database uses a newer schema")
                 if existed and connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise StorageUnavailable("change database integrity check failed")
                 connection.executescript("""
@@ -173,6 +184,7 @@ class ChangeStore:
                             REFERENCES transactions(change_id, kind) ON DELETE CASCADE
                     );
                 """)
+                connection.execute(f"PRAGMA user_version={CHANGE_SCHEMA_VERSION}")
         except StorageUnavailable:
             raise
         except sqlite3.DatabaseError as exc:
@@ -578,7 +590,7 @@ class ChangeStore:
         if target.exists():
             raise FileExistsError(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as source, sqlite3.connect(target) as destination:
+        with self._connect() as source, closing(sqlite3.connect(target)) as destination:
             source.backup(destination)
         references = self.verify_references()
         if references["missing"]:

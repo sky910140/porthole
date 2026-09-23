@@ -1,0 +1,66 @@
+name: Release candidate artifacts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  candidate:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            extensions/vscode/package-lock.json
+      - name: Install pinned build dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements-windows.lock
+          .\.venv\Scripts\python.exe -m pip install -e . --no-deps
+          .\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
+          npm ci
+          npm --prefix extensions/vscode ci
+          npx playwright install chromium --only-shell
+      - name: Verify before packaging
+        shell: pwsh
+        run: |
+          powershell -NoProfile -File .\scripts\self-test.ps1
+          npm --prefix extensions/vscode run test:integration
+          npm run test:e2e
+          node tests/e2e/changes.cjs
+      - name: Build unpublished artifacts
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
+          npm --prefix extensions/vscode run package
+          .\scripts\build-runtime.ps1
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          $vsix = Get-ChildItem extensions\vscode\*.vsix | Select-Object -First 1
+          $runtime = 'artifacts\runtime\ai-zhagan-windows-x64.zip'
+          foreach ($file in @($wheel.FullName, $vsix.FullName, $runtime)) {
+            .\.venv\Scripts\python.exe scripts\check_release_contents.py $file
+            if ($LASTEXITCODE -ne 0) { throw "Release contents rejected: $file" }
+          }
+          Copy-Item requirements-windows.lock dist\dependencies.txt
+          Add-Content dist\dependencies.txt 'pyinstaller==6.22.3'
+          .\.venv\Scripts\python.exe scripts\candidate_manifest.py $wheel.FullName $vsix.FullName $runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-zhagan-unpublished-windows-candidate
+          path: |
+            dist/*.whl
+            dist/candidate-manifest.json
+            dist/dependencies.txt
+            extensions/vscode/*.vsix
+            artifacts/runtime/ai-zhagan-windows-x64.zip
+            artifacts/runtime/runtime-manifest.json
+          if-no-files-found: error

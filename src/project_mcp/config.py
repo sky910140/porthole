@@ -50,6 +50,7 @@ class Project(BaseModel):
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    config_version: Literal["0.2", "0.3", "1.0"] = "0.2"
     projects: list[Project] = Field(default_factory=list, max_length=64)
     auth_mode: Literal["local", "github"] = "local"
     public_url: str | None = None
@@ -114,3 +115,26 @@ def save_config(path: Path, settings: Settings) -> None:
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf8")
     temp.replace(path)
+
+
+def migrate_config(raw: dict, source_version: str, target_version: str) -> dict:
+    """Return an explicit, forward-only config migration without touching disk."""
+    versions = ("0.2", "0.3", "1.0")
+    if source_version not in versions or target_version not in versions:
+        raise ValueError("unsupported config version")
+    if versions.index(target_version) < versions.index(source_version):
+        raise ValueError("config downgrade is not supported")
+    if raw.get("config_version", "0.2") != source_version:
+        raise ValueError("config source version does not match")
+    result = json.loads(json.dumps(raw))
+    for version in versions[versions.index(source_version) + 1:versions.index(target_version) + 1]:
+        if version == "0.3":
+            for project in result.get("projects", []):
+                project.setdefault("mode", "read_only")
+                project.setdefault("share_editor_buffers", False)
+        if version == "1.0":
+            for project in result.get("projects", []):
+                project.setdefault("apply_local_enabled", False)
+                project.setdefault("exclude_paths", [])
+        result["config_version"] = version
+    return result

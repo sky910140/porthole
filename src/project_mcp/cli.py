@@ -16,7 +16,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .changes.content import StorageUnavailable
 from .config import Settings, default_config_path, load_config, save_config
+from .upgrade import UpgradeError
 
 
 def status(settings, path):
@@ -44,6 +46,8 @@ async def serve(settings, path):
     import uvicorn
 
     from .server import Runtime, create_admin_app, create_mcp
+    if ((settings.state_dir or path.parent / ".local") / "upgrade-in-progress.json").exists():
+        raise ValueError("Upgrade in progress; complete or restore the snapshot before starting")
     runtime = Runtime(settings, path)
     hosts = [f"localhost:{settings.mcp_port}", f"127.0.0.1:{settings.mcp_port}"]
     if settings.public_url:
@@ -79,6 +83,8 @@ async def serve(settings, path):
 
 
 def start(settings, path):
+    if ((settings.state_dir or path.parent / ".local") / "upgrade-in-progress.json").exists():
+        raise ValueError("Upgrade in progress; complete or restore the snapshot before starting")
     if status(settings, path):
         print("Already running")
         return
@@ -131,11 +137,58 @@ def stop(settings, path):
     raise ValueError("Shutdown timed out; no unrelated process was terminated")
 
 
+def _port_open(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+def _upgrade_command(args, path: Path) -> None:
+    from .changes.content import KeyringKeyProvider, ProtectedContentStore
+    from .upgrade import UpgradeManager, _changes_fingerprint
+
+    if args.runtime_dir is None:
+        raise ValueError("--runtime-dir is required for upgrade commands")
+    state = (args.state_dir or path.parent / ".local").resolve()
+    if args.command == "upgrade-prepare":
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        if not args.snapshot_id:
+            raise ValueError("--snapshot-id is required")
+        snapshot_config = state / "upgrade-snapshots" / args.snapshot_id / "config.json"
+        raw = json.loads(snapshot_config.read_text(encoding="utf-8"))
+    admin_port = int(raw.get("admin_port", 8766))
+    identity = hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+    content = (ProtectedContentStore(
+        state / "changes" / "content", KeyringKeyProvider(identity),
+    ) if args.command == "upgrade-prepare" else None)
+    manager = UpgradeManager(
+        path, state, args.runtime_dir, content_store=content,
+        is_running=lambda: _port_open(admin_port),
+    )
+    if args.command == "upgrade-prepare":
+        if not args.target_version:
+            raise ValueError("--target-version is required")
+        print(manager.prepare_upgrade(args.target_version))
+    elif args.command == "upgrade-restore":
+        manager.restore_snapshot(args.snapshot_id)
+        print("Snapshot restored; project files were not changed")
+    else:
+        manager.complete_upgrade(args.snapshot_id, health_check=lambda: (
+            (manager.runtime_dir / "ai-zhagan.exe").is_file()
+            and isinstance(_changes_fingerprint(manager.db_path), list)
+        ))
+        print("Offline upgrade checks passed; start the service and verify connection")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Local Project Assistant")
     parser.add_argument("command", choices=[
         "init", "serve", "start", "stop", "status", "doctor", "token", "pair",
         "diagnostics-preview", "diagnostics-export",
+        "upgrade-prepare", "upgrade-restore", "upgrade-complete",
     ])
     parser.add_argument("--config", type=Path)
     parser.add_argument("--project", type=Path, default=Path.cwd())
@@ -143,6 +196,10 @@ def main(argv=None):
     parser.add_argument("--kind", choices=["admin", "mcp"], default="admin")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--include-paths", action="store_true")
+    parser.add_argument("--runtime-dir", type=Path)
+    parser.add_argument("--state-dir", type=Path)
+    parser.add_argument("--snapshot-id")
+    parser.add_argument("--target-version")
     args = parser.parse_args(argv)
     path = (args.config or default_config_path()).resolve()
     try:
@@ -154,6 +211,9 @@ def main(argv=None):
             save_config(path, settings)
             load_config(path)
             print(f"Initialized: {path}")
+            return 0
+        if args.command.startswith("upgrade-"):
+            _upgrade_command(args, path)
             return 0
         settings = load_config(path)
         if args.command == "serve":
@@ -228,7 +288,7 @@ def main(argv=None):
                     target, include_paths=args.include_paths,
                 ))
         return 0
-    except (ValueError, OSError, httpx.HTTPError) as exc:
+    except (ValueError, OSError, httpx.HTTPError, UpgradeError, StorageUnavailable) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

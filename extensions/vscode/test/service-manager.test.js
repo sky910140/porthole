@@ -62,6 +62,7 @@ test('verified artifact installs through staging and replaces only after success
     sha256: crypto.createHash('sha256').update(bytes).digest('hex'), size: bytes.length,
   }, (source, staging) => { fs.mkdirSync(staging); fs.writeFileSync(path.join(staging, 'version.txt'), 'new'); });
   assert.equal(fs.readFileSync(path.join(current, 'version.txt'), 'utf8'), 'new');
+  assert.equal(fs.readFileSync(path.join(root, 'current.previous', 'version.txt'), 'utf8'), 'old');
 });
 
 test('two windows share one managed launch and external services require opt-in', async () => {
