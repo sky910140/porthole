@@ -65,6 +65,20 @@ def test_admin_project_registration_persists_and_disables_removed_context(tmp_pa
         assert [p["id"] for p in c.get("/api/status").json()["projects"]] == ["demo"]
 
 
+def test_admin_scope_preview_is_authenticated_and_bounded_to_a_registered_project(tmp_path):
+    from project_mcp.server import Runtime, create_admin_app
+
+    s = settings(tmp_path)
+    with TestClient(create_admin_app(Runtime(s)), base_url="http://127.0.0.1:8766") as c:
+        assert c.get("/api/projects/demo/scope").status_code == 401
+        headers = {"Authorization": "Bearer " + s.admin_token}
+        response = c.get("/api/projects/demo/scope", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["project_id"] == "demo"
+        assert response.json()["accessible_files"] >= 1
+        assert c.get("/api/projects/unknown/scope", headers=headers).status_code == 400
+
+
 @pytest.mark.asyncio
 async def test_mcp_http_rejects_anonymous_and_has_no_management_route(tmp_path):
     from project_mcp.server import Runtime, create_mcp

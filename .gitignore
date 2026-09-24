@@ -18,3 +18,4 @@ node_modules/
 config/local.json
 .superpowers/
 artifacts/
+extensions/vscode/runtime-bundle/

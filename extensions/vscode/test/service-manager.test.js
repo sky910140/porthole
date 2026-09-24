@@ -12,8 +12,93 @@ const {
   ReconnectBackoff,
   ServiceManager,
   installVerifiedArtifact,
+  installBundledRuntime,
+  renameWithRetry,
   validateManifest,
 } = require('../lib/service-manager');
+
+function writeBundle(root, { version = '0.2.0', files = { 'ai-zhagan.exe': 'new runtime', '_internal/library.dll': 'library' } } = {}) {
+  const payload = path.join(root, 'payload');
+  fs.mkdirSync(payload, { recursive: true });
+  const entries = Object.entries(files).map(([name, content]) => {
+    const destination = path.join(payload, name);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, content);
+    const bytes = Buffer.from(content);
+    return { path: name.replaceAll('\\', '/'), size: bytes.length,
+      sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+  });
+  fs.writeFileSync(path.join(root, 'bundle.json'), JSON.stringify({
+    version, platform: 'win32', architecture: 'x64',
+    protocol_range: '>=1.0.0 <2.0.0', files: entries,
+  }));
+  return payload;
+}
+
+test('bundled runtime installs verified files and reuses a healthy install', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-bundle-'));
+  const bundle = path.join(root, 'bundle');
+  const current = path.join(root, 'current');
+  writeBundle(bundle);
+  assert.equal(installBundledRuntime(bundle, current, '0.2.0'), path.join(current, 'ai-zhagan.exe'));
+  assert.equal(fs.readFileSync(path.join(current, '_internal/library.dll'), 'utf8'), 'library');
+  fs.writeFileSync(path.join(current, 'keep.txt'), 'existing');
+  installBundledRuntime(bundle, current, '0.2.0');
+  assert.equal(fs.readFileSync(path.join(current, 'keep.txt'), 'utf8'), 'existing');
+});
+
+test('runtime installation retries a transient Windows rename failure', () => {
+  const calls = [];
+  const waits = [];
+  renameWithRetry('staging', 'current', {
+    rename: (source, destination) => {
+      calls.push([source, destination]);
+      if (calls.length === 1) throw Object.assign(new Error('scanner holds executable'), { code: 'EPERM' });
+    },
+    sleep: (milliseconds) => waits.push(milliseconds),
+  });
+  assert.deepEqual(calls, [['staging', 'current'], ['staging', 'current']]);
+  assert.deepEqual(waits, [50]);
+  assert.throws(() => renameWithRetry('staging', 'current', {
+    rename: () => { throw Object.assign(new Error('disk failure'), { code: 'EIO' }); },
+    sleep: () => assert.fail('non-transient error must not retry'),
+  }), /disk failure/);
+});
+
+test('damaged bundle and invalid manifest cannot replace an existing runtime', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-bundle-'));
+  const bundle = path.join(root, 'bundle');
+  const current = path.join(root, 'current');
+  writeBundle(bundle);
+  fs.mkdirSync(current);
+  fs.writeFileSync(path.join(current, 'ai-zhagan.exe'), 'old runtime');
+  fs.writeFileSync(path.join(bundle, 'payload/ai-zhagan.exe'), 'tampered');
+  assert.throws(() => installBundledRuntime(bundle, current, '0.2.0'), /校验失败/);
+  assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'old runtime');
+  writeBundle(bundle);
+  const manifestPath = path.join(bundle, 'bundle.json');
+  const manifestValue = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  for (const modified of [
+    { ...manifestValue, platform: 'linux' },
+    { ...manifestValue, protocol_range: '>=2.0.0 <3.0.0' },
+    { ...manifestValue, files: [{ ...manifestValue.files[0], path: '../escape.exe' }] },
+  ]) {
+    fs.writeFileSync(manifestPath, JSON.stringify(modified));
+    assert.throws(() => installBundledRuntime(bundle, current, '0.2.0'));
+    assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'old runtime');
+  }
+  for (const suspiciousPath of ['CON', '_internal/odd?.dll']) {
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      ...manifestValue, files: [{ ...manifestValue.files[0], path: suspiciousPath }],
+    }));
+    assert.throws(() => installBundledRuntime(bundle, current, '0.2.0'), /无效文件路径/);
+    assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'old runtime');
+  }
+  fs.writeFileSync(manifestPath, JSON.stringify(manifestValue));
+  installBundledRuntime(bundle, current, '0.2.0');
+  assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'new runtime');
+  assert.equal(fs.readFileSync(path.join(root, 'current.previous/ai-zhagan.exe'), 'utf8'), 'old runtime');
+});
 
 function manifest(overrides = {}) {
   return {

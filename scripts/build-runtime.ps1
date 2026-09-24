@@ -7,6 +7,14 @@ $buildRoot = Join-Path $OutputRoot 'build'
 $distRoot = Join-Path $OutputRoot 'dist'
 $entry = Join-Path $assistantRoot 'packaging\runtime_entry.py'
 $python = Join-Path $assistantRoot '.venv\Scripts\python.exe'
+$projectVersion = (& $python -c "import pathlib,sys,tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['project']['version'])" (Join-Path $assistantRoot 'pyproject.toml')).Trim()
+if (-not $projectVersion) { throw 'Project version is missing.' }
+function Get-FileSha256([string]$FilePath) {
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  $stream = [IO.File]::OpenRead($FilePath)
+  try { return -join ($algorithm.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) }
+  finally { $stream.Dispose(); $algorithm.Dispose() }
+}
 
 & $python -m PyInstaller --noconfirm --clean --onedir --name ai-zhagan `
   --paths (Join-Path $assistantRoot 'src') `
@@ -25,10 +33,10 @@ if (-not (Test-Path -LiteralPath $executable)) { throw 'Runtime executable was n
 $zip = Join-Path $OutputRoot 'ai-zhagan-windows-x64.zip'
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $runtimeDir '*') -DestinationPath $zip -CompressionLevel Optimal
-$hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+$hash = Get-FileSha256 $zip
 $size = (Get-Item -LiteralPath $zip).Length
 $manifest = [ordered]@{
-  version = '0.2.0'
+  version = $projectVersion
   protocol_range = '>=1.0.0 <2.0.0'
   platform = 'windows'
   architecture = 'x64'

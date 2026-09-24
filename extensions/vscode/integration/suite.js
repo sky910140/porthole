@@ -108,10 +108,16 @@ async function run() {
     assert.ok((await vscode.commands.getCommands(true)).includes('workbench.action.browser.open'));
     assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.pairManaged'));
     assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.onboarding'));
+    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.home'));
+    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.selectProject'));
     await api.configureConnection(folderA, 'http://127.0.0.1:18766', 'project-a', 'extension-secret-a');
     await api.configureConnection(folderB, 'http://127.0.0.1:18766', 'project-b', 'extension-secret-b');
     assert.equal(await api.getStoredToken(folderA), 'extension-secret-a');
     assert.equal(await api.getStoredToken(folderB), 'extension-secret-b');
+    const homeState = await api.currentHomeState();
+    assert.equal(homeState.view.projects.length, 2);
+    assert.equal(JSON.stringify(homeState.view).includes('extension-secret-a'), false);
+    await api.openHome();
 
     const documentA = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(folderA.uri, 'inside-a.txt'));
     const editorA = await vscode.window.showTextDocument(documentA);
@@ -202,6 +208,13 @@ async function run() {
     assert.equal(serverSessions.size, 0);
     assert.equal(await api.getStoredToken(folderA), undefined);
     assert.equal(await api.getStoredToken(folderB), undefined);
+    const additional = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-selected-folder-'));
+    try {
+      const selectedFolder = await api.workspaceFolderForPath(additional);
+      assert.equal(path.resolve(selectedFolder.uri.fsPath).toLowerCase(), path.resolve(additional).toLowerCase());
+      assert.equal(vscode.workspace.workspaceFolders.length, 3);
+      vscode.workspace.updateWorkspaceFolders(selectedFolder.index, 1);
+    } finally { fs.rmSync(additional, { recursive: true, force: true }); }
   } finally { await new Promise((resolve) => server.close(resolve)); }
 }
 module.exports = { run };

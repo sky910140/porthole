@@ -17,7 +17,9 @@ const {
 } = require('./lib/core');
 const { ChangeActionRunner, createChangeClient, reviewChoices } = require('./lib/changes');
 const { buildReadinessPayload } = require('./lib/readiness');
-const { ReconnectBackoff, ServiceManager } = require('./lib/service-manager');
+const { ReconnectBackoff, ServiceManager, installBundledRuntime } = require('./lib/service-manager');
+const { projectIdForPath, projectChoice, projectPolicyChange, normalizedRoot } = require('./lib/projects');
+const { deriveHomeView, homeHtml } = require('./lib/home');
 const {
   buildQuestionPrompt,
   runOnboarding,
@@ -27,6 +29,7 @@ const {
 const execFileAsync = promisify(execFile);
 
 const TOKEN_PREFIX = 'aiZhagan.token:';
+const MANAGED_TOKEN_KEY = 'aiZhagan.managedAdminToken';
 const DEFAULT_URL = 'http://127.0.0.1:8766';
 const timers = new Map();
 const publishedConnections = new Map();
@@ -39,6 +42,9 @@ const virtualChangeContents = new Map();
 let statusBar;
 let extensionContext;
 let globalClosing = false;
+let homePanel;
+let homeSelectedProjectId;
+const homeScopePreviews = new Map();
 
 function tokenKey(folder) {
   return `${TOKEN_PREFIX}${folder.uri.toString()}`;
@@ -95,7 +101,7 @@ async function connectionFor(folder, config) {
   return { client: new ContextClient(serviceUrl, token), serviceUrl, token };
 }
 
-function setStatus(text, tooltip, command = 'aiZhagan.publishContext') {
+function setStatus(text, tooltip, command = 'aiZhagan.home') {
   statusBar.text = `$(broadcast) AI Zhagan: ${text}`;
   statusBar.tooltip = tooltip;
   statusBar.command = command;
@@ -509,8 +515,15 @@ function managedRuntimePaths() {
   };
 }
 
-function projectIdFor(folder) {
-  return `workspace-${crypto.createHash('sha256').update(folder.uri.fsPath).digest('hex').slice(0, 12)}`;
+function ensureManagedRuntime() {
+  const paths = managedRuntimePaths();
+  const bundleRoot = path.join(extensionContext.extensionPath, 'runtime-bundle');
+  if (fs.existsSync(path.join(bundleRoot, 'bundle.json'))) {
+    installBundledRuntime(bundleRoot, path.dirname(paths.executable), require('./package.json').version);
+  } else if (!fs.existsSync(paths.executable)) {
+    throw new Error('当前扩展不含本机运行包，请安装完整的 Windows x64 VSIX。');
+  }
+  return paths;
 }
 
 async function pairManagedRuntime(selectedFolder = null) {
@@ -518,11 +531,8 @@ async function pairManagedRuntime(selectedFolder = null) {
     ? { folder: selectedFolder, config: folderConfiguration(selectedFolder) }
     : activeBinding(true);
   if (!binding) return;
-  const paths = managedRuntimePaths();
-  if (!fs.existsSync(paths.executable)) {
-    throw new Error(`未安装受管理运行包：${paths.executable}`);
-  }
-  const projectId = projectIdFor(binding.folder);
+  const paths = ensureManagedRuntime();
+  const projectId = projectIdForPath(binding.folder.uri.fsPath);
   if (!fs.existsSync(paths.config)) {
     await execFileAsync(paths.executable, [
       'init', '--config', paths.config, '--project', binding.folder.uri.fsPath, '--id', projectId,
@@ -571,9 +581,207 @@ async function pairManagedRuntime(selectedFolder = null) {
   }
   if (!project) throw new Error('本机服务未能登记当前工作区。');
   await saveConnection(binding.folder, serviceUrl, project.id, credentials.admin_token);
+  await extensionContext.secrets.store(MANAGED_TOKEN_KEY, credentials.admin_token);
   setStatus('已连接', `${binding.folder.name} → ${project.name || project.id}`);
+  homeSelectedProjectId = project.id;
+  await refreshHome();
   vscode.window.showInformationMessage('AI Zhagan 本机服务已启动并完成安全配对。');
   return { serviceUrl, projectId: project.id, status, token: credentials.admin_token };
+}
+
+async function homeConnection() {
+  const paths = managedRuntimePaths();
+  const token = await extensionContext.secrets.get(MANAGED_TOKEN_KEY);
+  if (token && fs.existsSync(paths.config)) {
+    const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+    const url = normalizeServiceUrl(`http://127.0.0.1:${config.admin_port}`);
+    return new ContextClient(url, token);
+  }
+  for (const folder of vscode.workspace.workspaceFolders || []) {
+    const saved = await extensionContext.secrets.get(tokenKey(folder));
+    if (saved) {
+      const url = folderConfiguration(folder).get('serviceUrl', DEFAULT_URL);
+      return new ContextClient(url, saved);
+    }
+  }
+  return null;
+}
+
+async function currentHomeState() {
+  const runtimeInstalled = fs.existsSync(managedRuntimePaths().executable);
+  try {
+    const client = await homeConnection();
+    const status = client ? await client.getStatus() : null;
+    const selected = status && (status.projects.find((item) => item.id === homeSelectedProjectId)
+      || status.projects[0]);
+    return { view: deriveHomeView({ runtimeInstalled, status, selectedProjectId: homeSelectedProjectId,
+      scopePreview: selected && homeScopePreviews.get(selected.id) }), client };
+  } catch (error) {
+    return { view: deriveHomeView({ runtimeInstalled, error: error.message }), client: null };
+  }
+}
+
+async function refreshHome() {
+  if (!homePanel) return;
+  const { view } = await currentHomeState();
+  await homePanel.webview.postMessage({ type: 'state', view });
+}
+
+async function workspaceFolderForPath(folderPath) {
+  const target = normalizedRoot(folderPath);
+  const find = () => (vscode.workspace.workspaceFolders || []).find(
+    (folder) => normalizedRoot(folder.uri.fsPath) === target,
+  );
+  if (find()) return find();
+  const folders = vscode.workspace.workspaceFolders || [];
+  const changed = vscode.workspace.updateWorkspaceFolders(folders.length, 0, {
+    uri: vscode.Uri.file(folderPath),
+  });
+  if (!changed) throw new Error('VS Code 未能把所选目录加入当前工作区。');
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      disposable.dispose();
+      reject(new Error('工作区更新超时。请在 VS Code 打开该文件夹后重试。'));
+    }, 10000);
+    const disposable = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      const folder = find();
+      if (folder) {
+        clearTimeout(timer); disposable.dispose(); resolve(folder);
+      }
+    });
+    const immediate = find();
+    if (immediate) { clearTimeout(timer); disposable.dispose(); resolve(immediate); }
+  });
+}
+
+async function chooseOrAuthorizeFolder() {
+  const selection = await vscode.window.showOpenDialog({
+    canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
+    openLabel: '选择项目文件夹',
+  });
+  if (!selection || !selection.length) return;
+  if (selection[0].scheme !== 'file') throw new Error('只能授权本机文件夹。');
+  const root = fs.realpathSync.native(selection[0].fsPath);
+  if (!fs.statSync(root).isDirectory()) throw new Error('请选择实际存在的文件夹。');
+  const { view } = await currentHomeState();
+  const choice = projectChoice(root, view.projects);
+  if (!choice.existing) {
+    const approved = await vscode.window.showInformationMessage(
+      `授权 AI Zhagan 读取以下目录中符合排除规则的已保存文件？\n${root}\n新项目默认仅查看代码；若目录尚未打开，也会加入当前 VS Code 工作区。`,
+      { modal: true }, '授权此目录',
+    );
+    if (approved !== '授权此目录') return;
+  }
+  ensureManagedRuntime();
+  const folder = await workspaceFolderForPath(root);
+  const result = await pairManagedRuntime(folder);
+  homeSelectedProjectId = result.projectId;
+  await extensionContext.globalState.update('aiZhagan.homeProjectId', result.projectId);
+  await refreshHome();
+}
+
+async function handleHomeAction(action) {
+  if (action === 'install') { ensureManagedRuntime(); return refreshHome(); }
+  if (action === 'pick-folder') return chooseOrAuthorizeFolder();
+  if (action === 'refresh') return refreshHome();
+  if (action === 'web-guide') {
+    return vscode.commands.executeCommand('vscode.open', vscode.Uri.file(
+      path.join(extensionContext.extensionPath, 'README.md'),
+    ));
+  }
+  const { view, client } = await currentHomeState();
+  if (!view.project || !client) throw new Error('请先选择并连接本机项目。');
+  if (action === 'copy-question') {
+    await vscode.env.clipboard.writeText(buildQuestionPrompt(view.project.id, 'README.md'));
+    return vscode.window.showInformationMessage('已复制当前项目的提问模板。');
+  }
+  if (action === 'verify') {
+    const challenge = await client.request('POST', '/api/verification-challenges', {
+      project_id: view.project.id,
+    });
+    await vscode.env.clipboard.writeText(`请使用 AI Zhagan 调用 verify_connection，project_id=${view.project.id}，challenge_id=${challenge.challenge_id}。只返回工具实际结果。`);
+    return vscode.window.showInformationMessage('已复制验证提示词，请在已连接 AI Zhagan 的 ChatGPT 对话中发送。');
+  }
+  if (action === 'preview-scope') {
+    const preview = await client.request('GET', `/api/projects/${encodeURIComponent(view.project.id)}/scope`);
+    homeScopePreviews.set(view.project.id, preview);
+    return refreshHome();
+  }
+  if (action === 'toggle-proposals' || action === 'toggle-local-apply') {
+    const update = projectPolicyChange(view.project, action);
+    if (update.mode === 'propose') {
+      const approved = await vscode.window.showInformationMessage(
+        '允许 AI 为此项目创建待审阅修改建议？此操作不会直接修改本机文件。',
+        { modal: true }, '允许提出修改',
+      );
+      if (approved !== '允许提出修改') return;
+    }
+    if (update.apply_local_enabled === true) {
+      const approved = await vscode.window.showWarningMessage(
+        '允许你在 VS Code 逐文件审阅后应用修改？网页无法自动应用。',
+        { modal: true }, '允许本机应用',
+      );
+      if (approved !== '允许本机应用') return;
+    }
+    await client.request('PATCH', `/api/projects/${encodeURIComponent(view.project.id)}`, update);
+    return refreshHome();
+  }
+  if (action === 'pause-project' || action === 'resume-project') {
+    await client.request('PATCH', `/api/projects/${encodeURIComponent(view.project.id)}`, {
+      paused: action === 'pause-project',
+    });
+    return refreshHome();
+  }
+  if (action === 'remove-project') {
+    const confirmation = await vscode.window.showWarningMessage(
+      `移除 ${view.project.name || view.project.id} 的 AI 访问授权？项目文件不会删除。`,
+      { modal: true }, '移除授权',
+    );
+    if (confirmation !== '移除授权') return;
+    await client.request('DELETE', `/api/projects/${encodeURIComponent(view.project.id)}`);
+    for (const folder of vscode.workspace.workspaceFolders || []) {
+      const config = folderConfiguration(folder);
+      if (config.get('projectId') !== view.project.id) continue;
+      await withBindingLock(folder, async (key) => {
+        await clearKeyContents(key);
+        await extensionContext.secrets.delete(tokenKey(folder));
+        await Promise.all([
+          config.update('projectId', undefined, vscode.ConfigurationTarget.WorkspaceFolder),
+          config.update('serviceUrl', undefined, vscode.ConfigurationTarget.WorkspaceFolder),
+        ]);
+      });
+    }
+    homeSelectedProjectId = undefined;
+    return refreshHome();
+  }
+  throw new Error('未知的首页操作。');
+}
+
+async function openHome() {
+  if (homePanel) { homePanel.reveal(); return refreshHome(); }
+  const panel = vscode.window.createWebviewPanel('aiZhagan.home', 'AI Zhagan', vscode.ViewColumn.Active, {
+    enableScripts: true,
+  });
+  homePanel = panel;
+  panel.webview.html = homeHtml(crypto.randomBytes(16).toString('base64'));
+  panel.onDidDispose(() => { if (homePanel === panel) homePanel = undefined; });
+  panel.webview.onDidReceiveMessage(async (message) => {
+    try {
+      if (message.type === 'ready') return refreshHome();
+      if (message.type === 'select-project') {
+        const { view } = await currentHomeState();
+        if (!view.projects.some((item) => item.id === message.projectId)) throw new Error('项目已不存在，请刷新。');
+        homeSelectedProjectId = message.projectId;
+        await extensionContext.globalState.update('aiZhagan.homeProjectId', message.projectId);
+        return refreshHome();
+      }
+      if (message.type === 'action') return handleHomeAction(message.action);
+    } catch (error) {
+      vscode.window.showErrorMessage(`AI Zhagan：${error.message}`);
+      await refreshHome();
+    }
+  });
+  return refreshHome();
 }
 
 function onboardingFolder(value) {
@@ -600,10 +808,7 @@ async function runVsCodeOnboarding() {
       return choice === '继续配置';
     },
     ensureRuntime: async () => {
-      const paths = managedRuntimePaths();
-      if (!fs.existsSync(paths.executable)) {
-        throw new Error(`尚未安装受管理运行包：${paths.executable}`);
-      }
+      ensureManagedRuntime();
     },
     listFolders: async () => (vscode.workspace.workspaceFolders || []).map((folder) => ({
       id: folder.uri.toString(), label: folder.name, folder,
@@ -751,8 +956,9 @@ async function openAssistant() {
 
 function activate(context) {
   extensionContext = context;
+  homeSelectedProjectId = context.globalState.get('aiZhagan.homeProjectId');
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
-  setStatus('未同步', '点击发布当前编辑上下文');
+  setStatus('打开首页', '查看项目与连接状态');
   const contentProvider = {
     provideTextDocumentContent: (uri) => virtualChangeContents.get(uri.toString()) ?? '',
   };
@@ -760,10 +966,26 @@ function activate(context) {
     statusBar,
     vscode.workspace.registerTextDocumentContentProvider('ai-zhagan-original', contentProvider),
     vscode.workspace.registerTextDocumentContentProvider('ai-zhagan-proposed', contentProvider),
+    vscode.commands.registerCommand('aiZhagan.home', openHome),
+    vscode.commands.registerCommand('aiZhagan.selectProject', async () => {
+      await openHome();
+      const { view } = await currentHomeState();
+      const choices = view.projects.map((project) => ({
+        label: project.name || project.id, description: project.root,
+        projectId: project.id,
+      }));
+      choices.push({ label: '$(folder-opened) 选择其他文件夹', projectId: null });
+      const picked = await vscode.window.showQuickPick(choices, { title: '选择 AI Zhagan 项目' });
+      if (!picked) return;
+      if (!picked.projectId) return chooseOrAuthorizeFolder();
+      homeSelectedProjectId = picked.projectId;
+      await context.globalState.update('aiZhagan.homeProjectId', picked.projectId);
+      return refreshHome();
+    }),
     vscode.commands.registerCommand('aiZhagan.configure', configure),
     vscode.commands.registerCommand('aiZhagan.onboarding', async () => {
       try {
-        await runVsCodeOnboarding();
+        await openHome();
       } catch (error) {
         const choice = await vscode.window.showErrorMessage(
           'AI Zhagan 向导暂时无法继续。', '查看错误详情',
@@ -806,6 +1028,10 @@ function activate(context) {
       publishActiveContext,
       disconnect,
       managedRuntimePaths,
+      ensureManagedRuntime,
+      currentHomeState,
+      openHome,
+      workspaceFolderForPath,
       pairManagedRuntime,
       runVsCodeOnboarding,
       getSessionId: sessionFor,

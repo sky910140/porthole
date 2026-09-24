@@ -6,9 +6,12 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -41,9 +44,25 @@ def invoke(executable: Path, *args: str, timeout: int = 35) -> subprocess.Comple
     )
 
 
+@contextmanager
+def temporary_runtime_root():
+    root = Path(tempfile.mkdtemp(prefix="ai-zhagan-runtime-"))
+    try:
+        yield root
+    finally:
+        # The shutdown endpoint closes its socket before the child releases its log handle.
+        for attempt in range(40):
+            try:
+                shutil.rmtree(root)
+                break
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.1)
+
+
 async def verify(executable: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="ai-zhagan-runtime-") as raw_root:
-        root = Path(raw_root)
+    with temporary_runtime_root() as root:
         (root / "README.md").write_text("# standalone runtime\n", encoding="utf8")
         config = root / "config.json"
         initialized = invoke(executable, "init", "--config", str(config), "--project", str(root), "--id", "standalone")

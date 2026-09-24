@@ -2,17 +2,18 @@
 
 让支持 MCP 的 AI 对话按需读取经过明确授权的本机项目。核心服务独立于 IDE，首个正式适配器为 VS Code。
 
-项目以 MIT 许可证开源。当前源码版本为 **0.2.0 本地候选版**：只读访问、编辑器上下文和受管理的 VS Code 修改审阅已通过本机自动化；公开安装、真实网页闭环和稳定升级尚未通过发布验收。[英文说明](README.en.md) · [兼容性](docs/compatibility.md) · [v1 发布评审](docs/acceptance/v1.md)
+项目以 MIT 许可证开源。当前源码版本为 **0.3.0 本地候选版**：VSIX 内置 Windows x64 运行包，VS Code 首页可选目录、管理授权并查看连接状态；公开分发、真实网页闭环和稳定升级尚未通过发布验收。[英文说明](README.en.md) · [兼容性](docs/compatibility.md) · [v1 发布评审](docs/acceptance/v1.md)
 
 当前提供项目目录、固定字符串搜索、分段读取、Git 状态和 diff、明确授权的编辑器上下文、修改建议及本机审阅应用、独立管理页面。没有模型 API 调用，也没有远程直接写文件或任意执行命令工具。
 
 ```mermaid
 flowchart LR
-    A[在 VS Code 选择项目] --> B[本机服务按授权读取]
-    B --> C[ChatGPT 通过自托管 MCP 提问]
-    C --> D[可选：提交修改建议]
-    D --> E[VS Code 查看差异并明确应用]
-    E --> F[网页再次查询结果]
+    A[安装 VSIX 并打开首页] --> B[选择文件夹并确认只读授权]
+    B --> C[本机服务按授权读取]
+    C --> D[ChatGPT 通过自托管 MCP 提问]
+    D --> E[可选：提交修改建议]
+    E --> F[VS Code 查看差异并明确应用]
+    F --> G[网页再次查询结果]
 ```
 
 修改建议首先是“待审阅”；只有在 VS Code 明确应用后才改变磁盘。应用后仍需运行项目自己的测试。首次使用见 [三步快速开始](docs/quickstart.md)，故障处理见 [排查指南](docs/troubleshooting.md)，数据范围见 [隐私说明](docs/privacy.md)。
@@ -21,7 +22,9 @@ flowchart LR
 
 ## 快速开始（Windows）
 
-面向日常使用的流程见 [三步快速开始](docs/quickstart.md)：选择项目、连接、试着问一个问题。以下命令保留给源码开发和手动服务管理。
+安装 `extensions/vscode/ai-zhagan-context-0.3.0.vsix` 后，在 VS Code 运行 `AI Zhagan: 打开首页`，点击“安装本机服务”，再点击“选择文件夹”并确认只读授权。无需 PowerShell、Python 或 Node。界面可切换项目、暂停或移除授权，并预览可访问文件数量。完整步骤见 [三步快速开始](docs/quickstart.md)。
+
+以下命令仅用于源码开发和手动服务管理。
 
 需要 Python 3.11+；Git 功能还需要 Git。在本项目目录执行：
 
@@ -44,19 +47,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 ## VS Code 扩展
 
-在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.2.0.vsix`。
+在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.3.0.vsix`。
 
-1. 打开已登记的项目目录，运行 `AI Zhagan: 开始或继续三步向导`；取消后可从原步骤继续。
-2. 使用受管理运行包时执行 `AI Zhagan: 启动并安全配对本机服务`，无需复制管理令牌；沿用手动服务时执行 `AI Zhagan: 配置连接`。
+1. 运行 `AI Zhagan: 打开首页`，安装内置运行包并通过系统目录选择器授权文件夹；原“三步向导”命令也会打开首页。
+2. 首页自动完成受管理服务配对，不需复制管理令牌。选择别的目录会创建独立授权，不沿用旧目录的修改权限；沿用手动服务时执行 `AI Zhagan: 配置连接`。
 3. 如需分享未保存内容，先在本机管理页为该项目开启“共享未保存内容”，再执行 `AI Zhagan: 发布当前编辑上下文`。令牌存入 VS Code SecretStorage。
 4. 执行 `AI Zhagan: 打开 ChatGPT / Claude`，使用 VS Code 集成浏览器；第三方登录需实际验证。
-5. 自动同步默认关闭，需要时在工作区启用 `aiZhagan.autoSync`。
+5. 首页显示本机服务、公网通道、账号授权和真实工具调用四层状态。自动同步默认关闭，需要时在工作区启用 `aiZhagan.autoSync`。
 
 网页返回修改编号后，在 VS Code 运行 `AI Zhagan: 查看修改建议`，从待审阅列表选择；列表未显示时仍可粘贴编号。逐文件检查差异，再运行 `AI Zhagan: 应用已审阅修改`。应用要求项目已开启本机应用、相关 VS Code 窗口在线且没有未保存内容，并使用最多 5 秒的一次性就绪租约。应用后仍需由用户运行项目测试。
 
 磁盘工具读取已保存内容。未保存内容默认不共享；明确开启后，`get_editor_context` 才能读取插件发布的内存快照。快照 15 分钟后失效。模型必须显式使用项目标识和会话标识，不能自动猜选另一窗口。
 
-每个项目默认使用“仅查看代码”模式，也可以在本机管理页切换为“允许提出修改”。后者只开放创建待审阅修改单的能力，不等于允许写入；本机应用授权单独管理。暂停项目会立即撤销文件、Git 和编辑器上下文访问。
+每个项目默认使用“仅查看代码”模式，也可以在 VS Code 首页切换为“允许提出修改”。后者只开放创建待审阅修改单的能力，不等于允许写入；本机应用授权单独管理。暂停项目会立即撤销文件、Git 和编辑器上下文访问。
 
 插件详细设置和测试见 [扩展说明](extensions/vscode/README.md)。其他 IDE 可以实现相同本地接口，详见 [适配协议](docs/adapter-api.md)。
 

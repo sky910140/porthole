@@ -41,8 +41,8 @@ jobs:
         shell: pwsh
         run: |
           .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
-          npm --prefix extensions/vscode run package
-          .\scripts\build-runtime.ps1
+          .\scripts\package-extension.ps1
+          .\.venv\Scripts\python.exe scripts\verify-vsix.py extensions\vscode\ai-zhagan-context-0.3.0.vsix
           $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
           $vsix = Get-ChildItem extensions\vscode\*.vsix | Select-Object -First 1
           $runtime = 'artifacts\runtime\ai-zhagan-windows-x64.zip'

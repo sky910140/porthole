@@ -1,6 +1,7 @@
 """Loopback-only management and adapter API; never mount this on the MCP port."""
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import time
@@ -141,6 +142,10 @@ def create_app(runtime):
                 runtime.update_project_policy(
                     request.path_params["project_id"], await body(request)
                 )
+            elif path.endswith("/scope") and path.startswith("/api/projects/") and request.method == "GET":
+                async with runtime.limits.read.slot():
+                    workspace = runtime.workspace(request.path_params["project_id"])
+                    return JSONResponse(await asyncio.to_thread(workspace.preview_scope))
             elif path == "/api/context" and request.method == "PUT":
                 data = await body(request)
                 workspace = runtime.workspace(data.get("project_id", ""))
@@ -226,6 +231,8 @@ def create_app(runtime):
             }, status_code=409)
         except QuotaExceeded:
             return JSONResponse({"error": "Change storage quota exceeded"}, status_code=429)
+        except BusyError:
+            return JSONResponse({"error": "Status service is busy"}, status_code=429)
         except (ValueError, TypeError, ValidationError, FileNotFoundError, UnicodeError):
             return JSONResponse({"error": "Invalid request, project or path"}, status_code=400)
         except (OSError, StorageUnavailable):
@@ -242,6 +249,7 @@ def create_app(runtime):
         Route("/api/status", status), Route("/api/projects", action, methods=["PUT"]),
         Route("/api/shutdown", action, methods=["POST"]),
         Route("/api/projects/{project_id}", action, methods=["DELETE", "PATCH"]),
+        Route("/api/projects/{project_id}/scope", action, methods=["GET"]),
         Route("/api/context", action, methods=["PUT"]),
         Route("/api/context/{session_id}", action, methods=["DELETE"]),
         Route("/api/verification-challenges", action, methods=["POST"]),

@@ -2,7 +2,7 @@
   "name": "ai-zhagan-context",
   "displayName": "AI Zhagan Context",
   "description": "将当前 VS Code 编辑上下文显式同步到本机 AI Zhagan 服务。",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local-ai-zhagan",
   "license": "MIT",
   "engines": {
@@ -10,6 +10,9 @@
   },
   "categories": ["Other"],
   "activationEvents": [
+    "onStartupFinished",
+    "onCommand:aiZhagan.home",
+    "onCommand:aiZhagan.selectProject",
     "onCommand:aiZhagan.configure",
     "onCommand:aiZhagan.onboarding",
     "onCommand:aiZhagan.pairManaged",
@@ -26,6 +29,8 @@
   "main": "./extension.js",
   "contributes": {
     "commands": [
+      { "command": "aiZhagan.home", "title": "AI Zhagan: 打开首页" },
+      { "command": "aiZhagan.selectProject", "title": "AI Zhagan: 选择或授权项目" },
       { "command": "aiZhagan.configure", "title": "AI Zhagan: 配置连接" },
       { "command": "aiZhagan.onboarding", "title": "AI Zhagan: 开始或继续三步向导" },
       { "command": "aiZhagan.pairManaged", "title": "AI Zhagan: 启动并安全配对本机服务" },
@@ -74,8 +79,9 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node integration/run.js",
-    "check": "node --check extension.js && node --check lib/changes.js && node --check lib/core.js && node --check lib/onboarding.js && node --check lib/protocol.js && node --check lib/readiness.js && node --check lib/service-manager.js && node --check lib/view-state.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
-    "package": "vsce package --no-dependencies --allow-missing-repository"
+    "check": "node --check extension.js && node --check lib/changes.js && node --check lib/core.js && node --check lib/home.js && node --check lib/onboarding.js && node --check lib/projects.js && node --check lib/protocol.js && node --check lib/readiness.js && node --check lib/service-manager.js && node --check lib/view-state.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/package-extension.ps1",
+    "package:vsix": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {
     "@vscode/test-electron": "3.1.0",

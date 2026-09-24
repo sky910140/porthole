@@ -11,4 +11,9 @@ function resolveTestRuntime(environment = process.env) {
   return { version: environment.VSCODE_TEST_VERSION || '1.138.0' };
 }
 
-module.exports = { resolveTestRuntime, resolveVsCodeExecutable };
+function resolveExtensionDevelopmentPath(environment, fallback) {
+  const configured = environment.AI_ZHAGAN_TEST_EXTENSION_PATH;
+  return configured && configured.trim() ? configured.trim() : fallback;
+}
+
+module.exports = { resolveTestRuntime, resolveVsCodeExecutable, resolveExtensionDevelopmentPath };

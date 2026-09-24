@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .changes.models import ChangeRequest, ChangeResult, FileChange
 
 PROTOCOL_VERSION = "1.0.0"
-SERVICE_VERSION = "0.2.0"
+SERVICE_VERSION = "0.3.0"
 CAPABILITIES = [
     "layered_health",
     "verification_challenge",

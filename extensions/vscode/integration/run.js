@@ -4,17 +4,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runTests } = require('@vscode/test-electron');
-const { resolveTestRuntime } = require('./runtime');
+const { resolveTestRuntime, resolveExtensionDevelopmentPath } = require('./runtime');
 
 async function main() {
-  const extensionDevelopmentPath = path.resolve(__dirname, '..');
+  const sourceExtensionPath = path.resolve(__dirname, '..');
+  const extensionDevelopmentPath = resolveExtensionDevelopmentPath(process.env, sourceExtensionPath);
   const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-vscode-'));
   const userDataDir = path.join(testRoot, 'user-data');
   const extensionsDir = path.join(testRoot, 'extensions');
   const workspaceDir = path.join(testRoot, 'workspace');
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(extensionsDir, { recursive: true });
-  fs.cpSync(path.join(extensionDevelopmentPath, 'test-fixture'), workspaceDir, { recursive: true });
+  fs.cpSync(path.join(sourceExtensionPath, 'test-fixture'), workspaceDir, { recursive: true });
   const options = {
     ...resolveTestRuntime(),
     extensionDevelopmentPath,

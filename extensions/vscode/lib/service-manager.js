@@ -4,6 +4,136 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
+function sha256(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function renameWithRetry(source, destination, {
+  rename = fs.renameSync,
+  sleep = (milliseconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
+} = {}) {
+  for (let attempt = 0; ; attempt += 1) {
+    try { return rename(source, destination); }
+    catch (error) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 6) throw error;
+      sleep(50 * (attempt + 1));
+    }
+  }
+}
+
+function bundleEntryPath(value) {
+  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')
+      || value.startsWith('/') || value.split('/').some((part) => !part || part === '.' || part === '..'
+        || /[\x00-\x1f<>:"\\|?*]/.test(part) || /[. ]$/.test(part)
+        || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) {
+    throw new Error('运行包清单包含无效文件路径。');
+  }
+  return value;
+}
+
+function validateBundle(bundleRoot, expectedVersion) {
+  const manifestBytes = fs.readFileSync(path.join(bundleRoot, 'bundle.json'));
+  const manifest = JSON.parse(manifestBytes.toString('utf8'));
+  if (manifest.version !== expectedVersion) throw new Error('运行包版本与扩展版本不匹配。');
+  if (manifest.platform !== process.platform || manifest.architecture !== process.arch) {
+    throw new Error('运行包与当前系统架构不匹配。');
+  }
+  const range = String(manifest.protocol_range || '');
+  if (!range.includes('>=1.') || !range.includes('<2.')) {
+    throw new Error('VERSION_INCOMPATIBLE：运行包协议主版本不兼容。');
+  }
+  if (!Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 10000) {
+    throw new Error('运行包清单缺少有效文件列表。');
+  }
+  const names = new Set();
+  let totalBytes = 0;
+  for (const entry of manifest.files) {
+    const relative = bundleEntryPath(entry.path);
+    const comparable = relative.toLowerCase();
+    if (names.has(comparable)) throw new Error('运行包清单包含重复文件路径。');
+    names.add(comparable);
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > 256 * 1024 * 1024
+        || !/^[a-f0-9]{64}$/i.test(entry.sha256)) {
+      throw new Error('运行包清单缺少有效大小或 SHA-256。');
+    }
+    totalBytes += entry.size;
+    if (totalBytes > 512 * 1024 * 1024) throw new Error('运行包超出大小限制。');
+  }
+  if (!names.has('ai-zhagan.exe')) throw new Error('运行包缺少主程序。');
+  return { manifest, manifestHash: sha256(manifestBytes) };
+}
+
+function checkedBundleFile(root, relative, entry) {
+  let current = root;
+  for (const part of relative.split('/')) {
+    current = path.join(current, part);
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error('运行包不允许符号链接。');
+  }
+  const stat = fs.statSync(current);
+  if (!stat.isFile() || stat.size !== entry.size || sha256(fs.readFileSync(current)) !== entry.sha256.toLowerCase()) {
+    throw new Error(`运行包文件校验失败：${relative}`);
+  }
+  return current;
+}
+
+function installedBundleHealthy(installRoot, entries, manifestHash) {
+  try {
+    if (fs.lstatSync(installRoot).isSymbolicLink()) return false;
+    const receipt = JSON.parse(fs.readFileSync(path.join(installRoot, 'installed.json'), 'utf8'));
+    if (receipt.manifest_sha256 !== manifestHash) return false;
+    for (const entry of entries) checkedBundleFile(installRoot, entry.path, entry);
+    return true;
+  } catch { return false; }
+}
+
+function installBundledRuntime(bundleRoot, installRoot, expectedVersion) {
+  const { manifest, manifestHash } = validateBundle(bundleRoot, expectedVersion);
+  const executable = path.join(installRoot, 'ai-zhagan.exe');
+  if (installedBundleHealthy(installRoot, manifest.files, manifestHash)) return executable;
+  const parent = path.dirname(installRoot);
+  fs.mkdirSync(parent, { recursive: true });
+  const staging = fs.mkdtempSync(path.join(parent, '.ai-zhagan-stage-'));
+  const backup = `${installRoot}.backup-${process.pid}-${Date.now()}`;
+  const previous = `${installRoot}.previous`;
+  let movedExisting = false;
+  try {
+    const sourceRoot = path.join(bundleRoot, 'payload');
+    for (const entry of manifest.files) {
+      const source = checkedBundleFile(sourceRoot, entry.path, entry);
+      const destination = path.join(staging, ...entry.path.split('/'));
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(source, destination);
+      checkedBundleFile(staging, entry.path, entry);
+    }
+    fs.writeFileSync(path.join(staging, 'installed.json'), JSON.stringify({
+      version: expectedVersion, manifest_sha256: manifestHash,
+      installed_at: new Date().toISOString(),
+    }));
+    if (fs.existsSync(installRoot)) {
+      if (fs.lstatSync(installRoot).isSymbolicLink()) throw new Error('现有安装目录不能是链接。');
+      if (fs.existsSync(previous)) fs.rmSync(previous, { recursive: true, force: true });
+      renameWithRetry(installRoot, backup);
+      movedExisting = true;
+    }
+    try { renameWithRetry(staging, installRoot); }
+    catch (error) {
+      if (movedExisting) renameWithRetry(backup, installRoot);
+      throw error;
+    }
+    if (movedExisting) {
+      try { renameWithRetry(backup, previous); }
+      catch (error) {
+        renameWithRetry(installRoot, staging);
+        renameWithRetry(backup, installRoot);
+        throw error;
+      }
+    }
+    return executable;
+  } finally {
+    if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 function validateManifest(manifest, options) {
   if (!manifest || manifest.version !== options.version) throw new Error('运行包版本与请求版本不匹配。');
   const artifact = manifest.artifacts && manifest.artifacts[`${options.platform}-${options.arch}`];
@@ -173,5 +303,5 @@ async function ensureService(options) {
 
 module.exports = {
   ReconnectBackoff, RestartPolicy, ServiceManager, ensureRuntime, ensureService,
-  installVerifiedArtifact, validateManifest,
+  installVerifiedArtifact, installBundledRuntime, renameWithRetry, validateManifest,
 };
