@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const vscode = require('vscode');
@@ -17,7 +18,8 @@ const {
 } = require('./lib/core');
 const { ChangeActionRunner, createChangeClient, reviewChoices } = require('./lib/changes');
 const { buildReadinessPayload } = require('./lib/readiness');
-const { ReconnectBackoff, ServiceManager, installBundledRuntime } = require('./lib/service-manager');
+const { ReconnectBackoff, ServiceManager, installBundledRuntime, installedBundleHealthy, validateBundle } = require('./lib/service-manager');
+const { prepareMigration, executeMigration, managedStatus } = require('./lib/web-migration');
 const { projectIdForPath, projectChoice, projectPolicyChange, normalizedRoot } = require('./lib/projects');
 const { deriveHomeView, homeHtml } = require('./lib/home');
 const {
@@ -30,6 +32,8 @@ const execFileAsync = promisify(execFile);
 
 const TOKEN_PREFIX = 'aiZhagan.token:';
 const MANAGED_TOKEN_KEY = 'aiZhagan.managedAdminToken';
+const GITHUB_CLIENT_ID_KEY = 'aiZhagan.githubClientId';
+const GITHUB_CLIENT_SECRET_KEY = 'aiZhagan.githubClientSecret';
 const DEFAULT_URL = 'http://127.0.0.1:8766';
 const timers = new Map();
 const publishedConnections = new Map();
@@ -44,6 +48,7 @@ let extensionContext;
 let globalClosing = false;
 let homePanel;
 let homeSelectedProjectId;
+let managedInstallPromise;
 const homeScopePreviews = new Map();
 
 function tokenKey(folder) {
@@ -515,15 +520,75 @@ function managedRuntimePaths() {
   };
 }
 
-function ensureManagedRuntime() {
+async function githubLaunchEnv(config, credentials = null) {
+  if (config.auth_mode !== 'github') return process.env;
+  const clientId = credentials && credentials.clientId || await extensionContext.secrets.get(GITHUB_CLIENT_ID_KEY);
+  const clientSecret = credentials && credentials.clientSecret || await extensionContext.secrets.get(GITHUB_CLIENT_SECRET_KEY);
+  if (!clientId || !clientSecret) throw new Error('网页连接需要原 GitHub OAuth App 的 Client ID 和 Client Secret。请从首页运行“迁移旧网页连接”。');
+  return { ...process.env, PROJECT_MCP_GITHUB_CLIENT_ID: clientId,
+    PROJECT_MCP_GITHUB_CLIENT_SECRET: clientSecret };
+}
+
+async function startManaged(paths, credentials = null) {
+  const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  const env = await githubLaunchEnv(config, credentials);
+  try { await execFileAsync(paths.executable, ['start', '--config', paths.config], { windowsHide: true, env }); }
+  catch (error) { throw new Error(`本机服务启动失败，请检查 ${paths.log}：${error.message}`); }
+  if (!await managedStatus(paths.config)) throw new Error('服务启动后身份未通过验证；请检查端口占用。');
+}
+
+async function installManagedRuntime() {
   const paths = managedRuntimePaths();
   const bundleRoot = path.join(extensionContext.extensionPath, 'runtime-bundle');
   if (fs.existsSync(path.join(bundleRoot, 'bundle.json'))) {
-    installBundledRuntime(bundleRoot, path.dirname(paths.executable), require('./package.json').version);
+    const installRoot = path.dirname(paths.executable);
+    const { manifest, manifestHash } = validateBundle(bundleRoot, require('./package.json').version);
+    if (!installedBundleHealthy(installRoot, manifest.files, manifestHash)) {
+      const running = fs.existsSync(paths.config) ? await managedStatus(paths.config) : null;
+      if (running) {
+        await githubLaunchEnv(JSON.parse(fs.readFileSync(paths.config, 'utf8')));
+        await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+      }
+      try {
+        installBundledRuntime(bundleRoot, installRoot, require('./package.json').version);
+        if (running) await startManaged(paths);
+      } catch (error) {
+        if (running && fs.existsSync(paths.executable) && !await managedStatus(paths.config)) {
+          try { await startManaged(paths); } catch { /* Original error remains actionable. */ }
+        }
+        throw error;
+      }
+    }
   } else if (!fs.existsSync(paths.executable)) {
     throw new Error('当前扩展不含本机运行包，请安装完整的 Windows x64 VSIX。');
   }
   return paths;
+}
+
+async function ensureManagedRuntime() {
+  if (!managedInstallPromise) {
+    managedInstallPromise = installManagedRuntime().finally(() => { managedInstallPromise = undefined; });
+  }
+  return managedInstallPromise;
+}
+
+async function portOpen(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    socket.setTimeout(500);
+    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('timeout', () => { socket.destroy(); resolve(false); });
+    socket.once('error', () => { socket.destroy(); resolve(false); });
+  });
+}
+
+async function checkManagedPorts(paths) {
+  const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  const owned = await managedStatus(paths.config);
+  if (!owned && (await portOpen(config.admin_port) || await portOpen(config.mcp_port))) {
+    throw new Error(`端口 ${config.mcp_port}/${config.admin_port} 已被其他服务占用。请先停止旧服务，再重试；AI Zhagan 不会操作其他进程。`);
+  }
+  return owned;
 }
 
 async function pairManagedRuntime(selectedFolder = null) {
@@ -531,7 +596,7 @@ async function pairManagedRuntime(selectedFolder = null) {
     ? { folder: selectedFolder, config: folderConfiguration(selectedFolder) }
     : activeBinding(true);
   if (!binding) return;
-  const paths = ensureManagedRuntime();
+  const paths = await ensureManagedRuntime();
   const projectId = projectIdForPath(binding.folder.uri.fsPath);
   if (!fs.existsSync(paths.config)) {
     await execFileAsync(paths.executable, [
@@ -540,20 +605,14 @@ async function pairManagedRuntime(selectedFolder = null) {
   }
   const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
   const serviceUrl = normalizeServiceUrl(`http://127.0.0.1:${config.admin_port}`);
+  await checkManagedPorts(paths);
   const manager = new ServiceManager({
     status: async () => {
-      try {
-        const response = await fetch(`${serviceUrl}/health`, { signal: AbortSignal.timeout(1500) });
-        if (!response.ok) return null;
-        const value = await response.json();
-        if (value.service !== 'ai-zhagan') return null;
-        return { serviceUrl, apiVersion: value.protocol_version, capabilities: value.capabilities || [] };
-      } catch { return null; }
+      const value = await managedStatus(paths.config);
+      return value ? { serviceUrl, apiVersion: value.protocol_version,
+        capabilities: value.capabilities || [] } : null;
     },
-    launch: async () => {
-      try { await execFileAsync(paths.executable, ['start', '--config', paths.config], { windowsHide: true }); }
-      catch (error) { throw new Error(`本机服务启动失败，请检查 ${paths.log}：${error.message}`); }
-    },
+    launch: async () => startManaged(paths),
   });
   await manager.ensureService();
   const paired = await execFileAsync(paths.executable, ['pair', '--config', paths.config], { windowsHide: true });
@@ -593,6 +652,7 @@ async function homeConnection() {
   const paths = managedRuntimePaths();
   const token = await extensionContext.secrets.get(MANAGED_TOKEN_KEY);
   if (token && fs.existsSync(paths.config)) {
+    if (!await managedStatus(paths.config)) throw new Error('当前端口没有运行属于此配置的本机服务。');
     const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
     const url = normalizeServiceUrl(`http://127.0.0.1:${config.admin_port}`);
     return new ContextClient(url, token);
@@ -609,15 +669,16 @@ async function homeConnection() {
 
 async function currentHomeState() {
   const runtimeInstalled = fs.existsSync(managedRuntimePaths().executable);
+  const managedConfigExists = fs.existsSync(managedRuntimePaths().config);
   try {
     const client = await homeConnection();
     const status = client ? await client.getStatus() : null;
     const selected = status && (status.projects.find((item) => item.id === homeSelectedProjectId)
       || status.projects[0]);
-    return { view: deriveHomeView({ runtimeInstalled, status, selectedProjectId: homeSelectedProjectId,
+    return { view: deriveHomeView({ runtimeInstalled, managedConfigExists, status, selectedProjectId: homeSelectedProjectId,
       scopePreview: selected && homeScopePreviews.get(selected.id) }), client };
   } catch (error) {
-    return { view: deriveHomeView({ runtimeInstalled, error: error.message }), client: null };
+    return { view: deriveHomeView({ runtimeInstalled, managedConfigExists, error: error.message }), client: null };
   }
 }
 
@@ -672,7 +733,7 @@ async function chooseOrAuthorizeFolder() {
     );
     if (approved !== '授权此目录') return;
   }
-  ensureManagedRuntime();
+  await ensureManagedRuntime();
   const folder = await workspaceFolderForPath(root);
   const result = await pairManagedRuntime(folder);
   homeSelectedProjectId = result.projectId;
@@ -680,9 +741,91 @@ async function chooseOrAuthorizeFolder() {
   await refreshHome();
 }
 
+async function migrateManagedWeb() {
+  const paths = managedRuntimePaths();
+  if (!fs.existsSync(paths.config)) throw new Error('请先在首页选择一个项目，创建本机服务。');
+  const activeFolder = (vscode.workspace.workspaceFolders || [])[0];
+  const suggested = activeFolder && path.join(activeFolder.uri.fsPath, 'config', 'local.json');
+  const selected = await vscode.window.showOpenDialog({
+    canSelectFolders: false, canSelectFiles: true, canSelectMany: false,
+    filters: { 'JSON 配置': ['json'] },
+    defaultUri: suggested && fs.existsSync(suggested) ? vscode.Uri.file(suggested) : undefined,
+    openLabel: '选择旧服务配置',
+  });
+  if (!selected || !selected.length) return;
+  if (selected[0].scheme !== 'file') throw new Error('只能选择本机旧配置文件。');
+  const clientId = await vscode.window.showInputBox({ title: '原 GitHub OAuth App 的 Client ID',
+    prompt: '请填写旧服务启动时使用的 Client ID；不会写入项目文件。', ignoreFocusOut: true,
+    validateInput: (value) => value.trim() ? null : 'Client ID 不能为空。' });
+  if (clientId === undefined) return;
+  const clientSecret = await vscode.window.showInputBox({ title: '原 GitHub OAuth App 的 Client Secret',
+    prompt: '请输入旧服务启动时使用的 Secret，用于验证原有加密连接记录。',
+    password: true, ignoreFocusOut: true,
+    validateInput: (value) => value ? null : 'Client Secret 不能为空。' });
+  if (clientSecret === undefined) return;
+  const plan = prepareMigration(selected[0].fsPath, paths.config, clientSecret);
+  const approved = await vscode.window.showInformationMessage(
+    `将 ${plan.recordCount} 条旧 OAuth 连接记录迁移到当前本机服务？\n公网地址：${plan.nextConfig.public_url}\n当前已授权项目和本机令牌会保留。迁移后仍须在 ChatGPT 完成一次真实工具调用验证。`,
+    { modal: true }, '确认迁移',
+  );
+  if (approved !== '确认迁移') return;
+  await ensureManagedRuntime();
+  await checkManagedPorts(paths);
+  const previousId = await extensionContext.secrets.get(GITHUB_CLIENT_ID_KEY);
+  const previousSecret = await extensionContext.secrets.get(GITHUB_CLIENT_SECRET_KEY);
+  let wasRunning = false;
+  try {
+    await extensionContext.secrets.store(GITHUB_CLIENT_ID_KEY, clientId.trim());
+    await extensionContext.secrets.store(GITHUB_CLIENT_SECRET_KEY, clientSecret);
+    await executeMigration(plan, {
+      stop: async () => {
+        wasRunning = Boolean(await checkManagedPorts(paths));
+        if (wasRunning) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+      },
+      start: async () => {
+        await startManaged(paths, { clientId: clientId.trim(), clientSecret });
+        for (const suffix of ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/mcp']) {
+          const response = await fetch(`${plan.nextConfig.public_url}${suffix}`, { signal: AbortSignal.timeout(8000) });
+          if (!response.ok) throw new Error(`公网 OAuth 发现地址返回 ${response.status}；请检查 HTTPS 转发。`);
+        }
+      },
+      quiesce: async () => {
+        if (await managedStatus(paths.config)) {
+          await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+        }
+      },
+      restore: async () => { if (wasRunning) await startManaged(paths); },
+    });
+  } catch (error) {
+    if (previousId === undefined) await extensionContext.secrets.delete(GITHUB_CLIENT_ID_KEY);
+    else await extensionContext.secrets.store(GITHUB_CLIENT_ID_KEY, previousId);
+    if (previousSecret === undefined) await extensionContext.secrets.delete(GITHUB_CLIENT_SECRET_KEY);
+    else await extensionContext.secrets.store(GITHUB_CLIENT_SECRET_KEY, previousSecret);
+    throw error;
+  }
+  await refreshHome();
+  vscode.window.showInformationMessage('旧网页连接记录已迁移，公网 OAuth 地址已验证。请在原 ChatGPT 连接发起一次工具调用；若提示授权，按页面重新授权。');
+}
+
 async function handleHomeAction(action) {
-  if (action === 'install') { ensureManagedRuntime(); return refreshHome(); }
+  if (action === 'install') { await ensureManagedRuntime(); return refreshHome(); }
+  if (action === 'start-service') {
+    const paths = await ensureManagedRuntime();
+    if (!await checkManagedPorts(paths)) await startManaged(paths);
+    let paired = false;
+    try {
+      const client = await homeConnection();
+      paired = Boolean(client && await client.getStatus());
+    } catch { /* Re-pair below. */ }
+    if (!paired) {
+      const folder = (vscode.workspace.workspaceFolders || [])[0];
+      if (folder) await pairManagedRuntime(folder);
+      else return chooseOrAuthorizeFolder();
+    }
+    return refreshHome();
+  }
   if (action === 'pick-folder') return chooseOrAuthorizeFolder();
+  if (action === 'migrate-web') return migrateManagedWeb();
   if (action === 'refresh') return refreshHome();
   if (action === 'web-guide') {
     return vscode.commands.executeCommand('vscode.open', vscode.Uri.file(
@@ -808,7 +951,7 @@ async function runVsCodeOnboarding() {
       return choice === '继续配置';
     },
     ensureRuntime: async () => {
-      ensureManagedRuntime();
+      await ensureManagedRuntime();
     },
     listFolders: async () => (vscode.workspace.workspaceFolders || []).map((folder) => ({
       id: folder.uri.toString(), label: folder.name, folder,
@@ -998,6 +1141,9 @@ function activate(context) {
     vscode.commands.registerCommand('aiZhagan.pairManaged', () => pairManagedRuntime().catch((error) => {
       vscode.window.showErrorMessage(`AI Zhagan：${error.message}`);
     })),
+    vscode.commands.registerCommand('aiZhagan.migrateWeb', () => migrateManagedWeb().catch((error) => {
+      vscode.window.showErrorMessage(`AI Zhagan 网页连接迁移失败：${error.message}`);
+    })),
     vscode.commands.registerCommand('aiZhagan.publishContext', () => publishActiveContext()),
     vscode.commands.registerCommand('aiZhagan.disconnect', disconnect),
     vscode.commands.registerCommand('aiZhagan.openAssistant', openAssistant),
@@ -1021,6 +1167,17 @@ function activate(context) {
       if (editor && event.uris.some((uri) => uri.toString() === editor.document.uri.toString())) scheduleAutoSync(editor.document);
     }),
   );
+  if (process.env.AI_ZHAGAN_EXTENSION_TEST !== '1') {
+    void (async () => {
+      const paths = managedRuntimePaths();
+      if (!fs.existsSync(paths.config) || !await context.secrets.get(MANAGED_TOKEN_KEY)) return;
+      try {
+        await ensureManagedRuntime();
+        if (!await checkManagedPorts(paths)) await startManaged(paths);
+        await refreshHome();
+      } catch (error) { setStatus('需要检查', `本机服务恢复失败：${error.message}`); }
+    })();
+  }
   if (process.env.AI_ZHAGAN_EXTENSION_TEST === '1') {
     return {
       configureConnection: saveConnection,

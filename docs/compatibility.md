@@ -1,13 +1,14 @@
 # 兼容性与验收状态
 
-更新：2026-09-24（0.3.0 本机候选）。只有完成实际验证的组合标记为“通过”；CI 配置不等于远端流水线已运行。[本轮自测记录](acceptance/zero-command-onboarding.md)。
+更新：2026-09-26（0.3.1 本机候选）。只有完成实际验证的组合标记为“通过”；CI 配置不等于远端流水线已运行。[本轮自测记录](acceptance/web-oauth-migration.md)。
 
 | 组件 | 组合 | 状态 | 证据或限制 |
 |---|---|---|---|
-| 核心服务源码 | Windows、Python 3.12 | 通过 | 0.3.0 本机 148 passed、2 skipped，真实 HTTP/MCP 测试 |
+| 核心服务源码 | Windows、Python 3.12 | 通过 | 0.3.1 本机 148 passed、2 skipped，覆盖率 83.41% |
 | 核心服务源码 | Windows、Python 3.11 | CI 待运行 | 已进入四组合矩阵，本机没有 3.11 运行结果 |
-| VSIX 内置运行包 | Windows x64、无 Python/Node 的受限 PATH | 本机通过 | 从 0.3.0 VSIX 解包并隔离安装，服务配对与 MCP 真实读取通过；全新虚拟机仍待验收 |
-| VS Code 扩展逻辑 | Node 24 | 通过 | 0.3.0 扩展单测 42 passed，含首页、目录授权和安装保护 |
+| VSIX 内置运行包 | Windows x64、无 Python/Node 的受限 PATH | 本机通过 | 从 0.3.1 VSIX 解包并隔离安装，服务配对与 MCP 真实读取通过；全新虚拟机仍待验收 |
+| VS Code 扩展逻辑 | Node 24 | 通过 | 0.3.1 扩展单测 50 passed，含 OAuth 迁移与回滚 |
+| 旧网页 OAuth 记录迁移 | FastMCP 加密文件树、0.3.1 打包程序 | 隔离环境通过 | 旧 client 记录导入后可解密，本机 OAuth 发现地址可用；真实 ChatGPT 账号仍待验收 |
 | VS Code Extension Host | VS Code 1.138.0 x64 | 通过 | 隔离用户数据、多根工作区；源扩展及从最终 VSIX 提取的扩展均退出码 0 |
 | VS Code Extension Host | VS Code 1.137.0 x64 | 0.3.0 待复测 | 0.2.0 曾在隔离 Extension Host 通过，本轮尚未重跑 |
 | 管理页 | Playwright Chromium | 通过 | 登录、项目策略、导航、演示、响应式和刷新隔离 |

@@ -1,6 +1,6 @@
 'use strict';
 
-function deriveHomeView({ runtimeInstalled, status = null, selectedProjectId = null,
+function deriveHomeView({ runtimeInstalled, managedConfigExists = false, status = null, selectedProjectId = null,
   scopePreview = null, error = null }) {
   const projects = Array.isArray(status && status.projects) ? status.projects : [];
   const project = projects.find((item) => item.id === selectedProjectId) || projects[0] || null;
@@ -14,10 +14,13 @@ function deriveHomeView({ runtimeInstalled, status = null, selectedProjectId = n
   const scopeText = project && scopePreview && scopePreview.project_id === project.id
     ? `可访问文件 ${scopePreview.accessible_files} 个，已排除 ${excluded} 项；${scopePreview.scan_complete ? '扫描完整' : '未扫描完整，请缩小目录'}`
     : '尚未预览。仅共享所选目录中符合规则的已保存文件。';
-  const base = { project, projects, layers, publicUrl: status && status.public_url || null,
+  const base = { project, projects, layers, managedConfigExists, publicUrl: status && status.public_url || null,
     authMode: status && status.auth_mode || 'local', scopeText, error };
   if (!runtimeInstalled && !status) return { ...base, title: '先安装本机服务',
     message: '运行包随当前扩展提供，点击一次即可安装，无需打开终端。', primaryAction: 'install', primaryLabel: '安装本机服务' };
+  if (!status && managedConfigExists) return { ...base, title: '启动本机服务',
+    message: error ? `本机服务尚未连接：${error}` : '当前本机服务尚未运行。',
+    primaryAction: 'start-service', primaryLabel: '启动本机服务' };
   if (!status) return { ...base, title: '选择要授权的项目',
     message: error ? `本机服务尚未连接：${error}` : '选择本机文件夹，确认后默认仅查看已保存代码。',
     primaryAction: 'pick-folder', primaryLabel: '选择文件夹' };
@@ -42,6 +45,11 @@ function deriveHomeView({ runtimeInstalled, status = null, selectedProjectId = n
       message: '公网通道和账号授权已就绪，还需要从 ChatGPT 发起一次真实工具调用。',
       primaryAction: 'verify', primaryLabel: '复制验证提示词' };
   }
+  if (status.auth_mode === 'github' && status.public_url) {
+    return { ...base, title: '网页连接待验证',
+      message: '网页地址已配置。请在 ChatGPT 发起真实工具调用；若要求登录，请按网页提示重新授权。',
+      primaryAction: 'verify', primaryLabel: '复制验证提示词' };
+  }
   return { ...base, title: '本机项目已就绪',
     message: '本机已授权此项目；ChatGPT 网页连接还需要完成接入配置。',
     primaryAction: 'web-guide', primaryLabel: '查看网页连接步骤' };
@@ -62,7 +70,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:14px 0
 </style></head><body><main><header><h1>AI Zhagan</h1><p class="muted">选择项目，确认共享范围，再连接你使用的 AI。</p></header>
 <section class="card" aria-labelledby="headline"><h2 id="headline">正在检查</h2><p id="summary" role="status" aria-live="polite"></p><div class="row"><button id="primary" type="button">请稍候</button><button type="button" class="secondary" data-action="refresh">刷新状态</button></div><p id="error" role="alert"></p></section>
 <section class="card" aria-labelledby="project-heading"><h2 id="project-heading">项目</h2><label for="projects">当前查看</label> <select id="projects"></select><dl><dt>目录</dt><dd id="root">—</dd><dt>项目标识</dt><dd><code id="project-id">—</code></dd><dt>访问模式</dt><dd id="mode">—</dd><dt>本机应用</dt><dd id="apply">—</dd><dt>共享范围</dt><dd id="scope">—</dd></dl><div class="row"><button type="button" class="secondary" data-action="pick-folder">选择其他文件夹</button><button type="button" class="secondary" id="preview" data-action="preview-scope">预览可访问文件</button><button type="button" class="secondary" id="proposals" data-action="toggle-proposals">允许提出修改</button><button type="button" class="secondary" id="local-apply" data-action="toggle-local-apply">允许本机应用</button><button type="button" class="secondary" id="pause" data-action="pause-project">暂停访问</button><button type="button" class="secondary" id="remove" data-action="remove-project">移除授权</button></div></section>
-<section class="card" aria-labelledby="connection-heading"><h2 id="connection-heading">连接进度</h2><ol id="layers"></ol><p id="endpoint" class="muted"></p><div class="row"><button type="button" class="secondary" data-action="copy-question">复制提问模板</button><button type="button" class="secondary" data-action="web-guide">网页连接说明</button></div></section>
+<section class="card" aria-labelledby="connection-heading"><h2 id="connection-heading">连接进度</h2><ol id="layers"></ol><p id="endpoint" class="muted"></p><div class="row"><button type="button" class="secondary" data-action="copy-question">复制提问模板</button><button type="button" class="secondary" id="migrate-web" data-action="migrate-web">迁移旧网页连接</button><button type="button" class="secondary" data-action="web-guide">网页连接说明</button></div></section>
 <p class="muted">网页提出的修改必须在 VS Code 查看差异并明确应用；本页不会自动写入项目文件。</p>
 </main><script nonce="${nonce}">
 const vscode=acquireVsCodeApi();let current=null;
@@ -80,6 +88,7 @@ el('local-apply').disabled=!value.project||value.project.mode!=='propose';el('lo
 el('scope').textContent=value.scopeText;el('preview').disabled=!value.project;
 el('pause').disabled=!value.project;el('pause').textContent=value.project?.paused?'恢复访问':'暂停访问';el('pause').dataset.action=value.project?.paused?'resume-project':'pause-project';el('remove').disabled=!value.project;
 document.querySelector('button[data-action="copy-question"]').disabled=!value.project;
+el('migrate-web').hidden=!value.managedConfigExists||value.authMode==='github';
 el('endpoint').textContent=value.publicUrl?'MCP 地址：'+value.publicUrl+'/mcp':'网页连接：尚无 HTTPS 地址';
 const list=el('layers');list.replaceChildren();const names={ok:'正常',failed:'失败',expired:'已过期',checking:'检查中',unknown:'尚未验证'};
 for(const layer of value.layers){const item=document.createElement('li');item.textContent=layer.label+'：'+(names[layer.state]||'尚未验证');list.append(item)}

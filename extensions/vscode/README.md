@@ -4,7 +4,7 @@
 
 ## 安装
 
-在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `ai-zhagan-context-0.3.0.vsix`。候选 VSIX 已内置 Windows x64 运行包。
+在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `ai-zhagan-context-0.3.1.vsix`。候选 VSIX 已内置 Windows x64 运行包。
 
 ## 使用
 
@@ -16,6 +16,8 @@
 4. 首页分别显示本机服务、公网通道、账号授权和真实工具调用。网页连接需另行配置固定 HTTPS 地址、GitHub OAuth 和允许账号；本机启动并不等于网页已连接。
 
 使用已有手动服务时，明确运行 `AI Zhagan: 配置连接`，输入 Bearer token 并选择项目。扩展不会停止或升级手动服务。
+
+旧服务已有 ChatGPT 网页 OAuth 连接时，在首页点击“迁移旧网页连接”，选择旧配置 JSON 文件，输入原 GitHub OAuth App 的 Client ID 和 Client Secret，再确认原公网地址。扩展只导入 OAuth 状态和网页身份设置，保留当前项目、修改权限、本机令牌；失败会尝试恢复原配置。凭据仅保存在 VS Code SecretStorage。迁移后在 ChatGPT 发起真实工具调用验证，必要时重新授权。不能仅凭本机启动或 OAuth 发现地址成功就认定账号连接可用。
 
 其他操作：
 

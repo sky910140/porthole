@@ -303,5 +303,6 @@ async function ensureService(options) {
 
 module.exports = {
   ReconnectBackoff, RestartPolicy, ServiceManager, ensureRuntime, ensureService,
-  installVerifiedArtifact, installBundledRuntime, renameWithRetry, validateManifest,
+  installVerifiedArtifact, installBundledRuntime, installedBundleHealthy, renameWithRetry, validateBundle,
+  validateManifest,
 };

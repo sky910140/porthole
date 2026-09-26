@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { deriveHomeView } = require('../lib/home');
+const { deriveHomeView, homeHtml } = require('../lib/home');
 
 test('home gives one actionable step for installation, authorization and web verification', () => {
   assert.equal(deriveHomeView({ runtimeInstalled: false }).primaryAction, 'install');
@@ -53,4 +53,20 @@ test('an explicitly connected manual service remains usable without managed runt
   }, selectedProjectId: 'manual' });
   assert.equal(view.project.id, 'manual');
   assert.notEqual(view.primaryAction, 'install');
+});
+
+test('an installed service can be restarted and the migration action stays available', () => {
+  const view = deriveHomeView({ runtimeInstalled: true, managedConfigExists: true,
+    error: 'connection refused' });
+  assert.equal(view.primaryAction, 'start-service');
+  assert.equal(view.managedConfigExists, true);
+  assert.match(homeHtml('test-nonce'), /data-action="migrate-web"/);
+});
+
+test('configured OAuth still requires a real ChatGPT tool call before claiming success', () => {
+  const view = deriveHomeView({ runtimeInstalled: true, managedConfigExists: true,
+    status: { projects: [{ id: 'p', root: 'D:\\p' }], auth_mode: 'github',
+      public_url: 'https://example.test', health: {} } });
+  assert.equal(view.title, '网页连接待验证');
+  assert.equal(view.primaryAction, 'verify');
 });

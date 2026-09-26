@@ -2,7 +2,7 @@
 
 让支持 MCP 的 AI 对话按需读取经过明确授权的本机项目。核心服务独立于 IDE，首个正式适配器为 VS Code。
 
-项目以 MIT 许可证开源。当前源码版本为 **0.3.0 本地候选版**：VSIX 内置 Windows x64 运行包，VS Code 首页可选目录、管理授权并查看连接状态；公开分发、真实网页闭环和稳定升级尚未通过发布验收。[英文说明](README.en.md) · [兼容性](docs/compatibility.md) · [v1 发布评审](docs/acceptance/v1.md)
+项目以 MIT 许可证开源。当前源码版本为 **0.3.1 本地候选版**：VSIX 内置 Windows x64 运行包，VS Code 首页可选目录、管理授权、迁移旧网页连接并查看连接状态；公开分发、真实网页闭环和稳定升级尚未通过发布验收。[英文说明](README.en.md) · [兼容性](docs/compatibility.md) · [v1 发布评审](docs/acceptance/v1.md)
 
 当前提供项目目录、固定字符串搜索、分段读取、Git 状态和 diff、明确授权的编辑器上下文、修改建议及本机审阅应用、独立管理页面。没有模型 API 调用，也没有远程直接写文件或任意执行命令工具。
 
@@ -22,7 +22,7 @@ flowchart LR
 
 ## 快速开始（Windows）
 
-安装 `extensions/vscode/ai-zhagan-context-0.3.0.vsix` 后，在 VS Code 运行 `AI Zhagan: 打开首页`，点击“安装本机服务”，再点击“选择文件夹”并确认只读授权。无需 PowerShell、Python 或 Node。界面可切换项目、暂停或移除授权，并预览可访问文件数量。完整步骤见 [三步快速开始](docs/quickstart.md)。
+安装 `extensions/vscode/ai-zhagan-context-0.3.1.vsix` 后，在 VS Code 运行 `AI Zhagan: 打开首页`，点击“安装本机服务”，再点击“选择文件夹”并确认只读授权。无需 PowerShell、Python 或 Node。已有旧版网页连接可从首页选择“迁移旧网页连接”。界面可切换项目、暂停或移除授权，并预览可访问文件数量。完整步骤见 [三步快速开始](docs/quickstart.md)。
 
 以下命令仅用于源码开发和手动服务管理。
 
@@ -47,7 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 ## VS Code 扩展
 
-在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.3.0.vsix`。
+在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.3.1.vsix`。
 
 1. 运行 `AI Zhagan: 打开首页`，安装内置运行包并通过系统目录选择器授权文件夹；原“三步向导”命令也会打开首页。
 2. 首页自动完成受管理服务配对，不需复制管理令牌。选择别的目录会创建独立授权，不沿用旧目录的修改权限；沿用手动服务时执行 `AI Zhagan: 配置连接`。

@@ -1,6 +1,6 @@
 # 候选构建与升级演练
 
-当前版本：0.3.0。此文档描述**未公开发布**的 Windows 候选构建和本机升级保护。当前没有签名证书；干净虚拟机和真实网页账号验收仍是发布门禁。
+当前版本：0.3.1。此文档描述**未公开发布**的 Windows 候选构建和本机升级保护。当前没有签名证书；干净虚拟机和真实网页账号验收仍是发布门禁。
 
 ## 候选构建
 
@@ -14,8 +14,8 @@ npm --prefix extensions/vscode run test:integration
 npm run test:e2e
 .venv/Scripts/python.exe -m pip wheel . --no-deps -w dist
 ./scripts/package-extension.ps1
-.venv/Scripts/python.exe scripts/verify-vsix.py extensions/vscode/ai-zhagan-context-0.3.0.vsix
-.venv/Scripts/python.exe scripts/candidate_manifest.py dist/ai_zhagan-0.3.0-py3-none-any.whl extensions/vscode/ai-zhagan-context-0.3.0.vsix artifacts/runtime/ai-zhagan-windows-x64.zip
+.venv/Scripts/python.exe scripts/verify-vsix.py extensions/vscode/ai-zhagan-context-0.3.1.vsix
+.venv/Scripts/python.exe scripts/candidate_manifest.py dist/ai_zhagan-0.3.1-py3-none-any.whl extensions/vscode/ai-zhagan-context-0.3.1.vsix artifacts/runtime/ai-zhagan-windows-x64.zip
 ```
 
 候选清单在 `dist/candidate-manifest.json`。运行包清单和 ZIP 在 `artifacts/runtime/`。打包脚本只纳入源码和已声明的依赖；`check_release_contents.py` 对 wheel、VSIX 与运行 ZIP 拒绝本地令牌、日志、`.env` 和状态目录。第三方许可清单仍需发布前人工核对。
