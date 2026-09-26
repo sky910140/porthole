@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const vscode = require('vscode');
 const {
@@ -18,8 +18,12 @@ const {
 } = require('./lib/core');
 const { ChangeActionRunner, createChangeClient, reviewChoices } = require('./lib/changes');
 const { buildReadinessPayload } = require('./lib/readiness');
-const { ReconnectBackoff, ServiceManager, installBundledRuntime, installedBundleHealthy, validateBundle } = require('./lib/service-manager');
+const { ReconnectBackoff, RestartPolicy, ServiceManager, installBundledRuntime, installedBundleHealthy, validateBundle } = require('./lib/service-manager');
 const { prepareMigration, executeMigration, managedStatus } = require('./lib/web-migration');
+const { prepareWebSetup, resolveGithubOwner, executeWebSetup } = require('./lib/web-setup');
+const { hasLoginStartup, setLoginStartup } = require('./lib/startup');
+const { classifyConnection } = require('./lib/diagnostics');
+const { upgradeManagedBundle } = require('./lib/upgrade-flow');
 const { projectIdForPath, projectChoice, projectPolicyChange, normalizedRoot } = require('./lib/projects');
 const { deriveHomeView, homeHtml } = require('./lib/home');
 const {
@@ -49,7 +53,10 @@ let globalClosing = false;
 let homePanel;
 let homeSelectedProjectId;
 let managedInstallPromise;
+let managedRecoveryPromise;
+const managedRestartPolicy = new RestartPolicy();
 const homeScopePreviews = new Map();
+let homeDiagnosis;
 
 function tokenKey(folder) {
   return `${TOKEN_PREFIX}${folder.uri.toString()}`;
@@ -520,11 +527,38 @@ function managedRuntimePaths() {
   };
 }
 
+async function runCredentialCommand(paths, command, payload = null) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(paths.executable, [command, '--config', paths.config], {
+      windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    child.once('error', reject);
+    child.once('close', (code) => code === 0 ? resolve() : reject(new Error('系统凭据库操作失败；请检查本机运行包和 Windows 凭据管理器。')));
+    child.stdin.on('error', () => {});
+    child.stdin.end(payload === null ? '' : JSON.stringify(payload));
+  });
+}
+
+async function syncLoginCredentials(paths, clientId, clientSecret) {
+  if (!await hasLoginStartup(paths.executable, paths.config, execFileAsync)) return;
+  try {
+    await runCredentialCommand(paths, 'credential-store', { client_id: clientId, client_secret: clientSecret });
+  } catch {
+    try {
+      await setLoginStartup(false, paths.executable, paths.config, execFileAsync);
+      vscode.window.showWarningMessage('系统凭据库不可用，已关闭开机自动启动；当前 VS Code 会话仍可使用网页连接。');
+    } catch {
+      vscode.window.showWarningMessage('系统凭据库不可用且无法关闭开机启动；请在首页关闭开机启动。当前 VS Code 会话仍可使用网页连接。');
+    }
+  }
+}
+
 async function githubLaunchEnv(config, credentials = null) {
   if (config.auth_mode !== 'github') return process.env;
   const clientId = credentials && credentials.clientId || await extensionContext.secrets.get(GITHUB_CLIENT_ID_KEY);
   const clientSecret = credentials && credentials.clientSecret || await extensionContext.secrets.get(GITHUB_CLIENT_SECRET_KEY);
-  if (!clientId || !clientSecret) throw new Error('网页连接需要原 GitHub OAuth App 的 Client ID 和 Client Secret。请从首页运行“迁移旧网页连接”。');
+  if (!clientId && !clientSecret) return process.env; // Backend may use the OS credential vault.
+  if (!clientId || !clientSecret) throw new Error('GitHub OAuth 凭据不完整，请在首页重新设置网页连接。');
   return { ...process.env, PROJECT_MCP_GITHUB_CLIENT_ID: clientId,
     PROJECT_MCP_GITHUB_CLIENT_SECRET: clientSecret };
 }
@@ -537,25 +571,62 @@ async function startManaged(paths, credentials = null) {
   if (!await managedStatus(paths.config)) throw new Error('服务启动后身份未通过验证；请检查端口占用。');
 }
 
-async function installManagedRuntime() {
+async function installManagedRuntime(force = false) {
   const paths = managedRuntimePaths();
+  if (!force && extensionContext.globalState.get('aiZhagan.rollbackHold') && fs.existsSync(paths.executable)) return paths;
   const bundleRoot = path.join(extensionContext.extensionPath, 'runtime-bundle');
   if (fs.existsSync(path.join(bundleRoot, 'bundle.json'))) {
     const installRoot = path.dirname(paths.executable);
     const { manifest, manifestHash } = validateBundle(bundleRoot, require('./package.json').version);
     if (!installedBundleHealthy(installRoot, manifest.files, manifestHash)) {
-      const running = fs.existsSync(paths.config) ? await managedStatus(paths.config) : null;
-      if (running) {
-        await githubLaunchEnv(JSON.parse(fs.readFileSync(paths.config, 'utf8')));
-        await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
-      }
+      const existing = fs.existsSync(paths.executable) && fs.existsSync(paths.config);
+      const running = existing ? await checkManagedPorts(paths) : null;
+      let upgraded = false;
       try {
-        installBundledRuntime(bundleRoot, installRoot, require('./package.json').version);
-        if (running) await startManaged(paths);
-      } catch (error) {
-        if (running && fs.existsSync(paths.executable) && !await managedStatus(paths.config)) {
-          try { await startManaged(paths); } catch { /* Original error remains actionable. */ }
+        if (!existing) {
+          installBundledRuntime(bundleRoot, installRoot, require('./package.json').version);
+          await extensionContext.globalState.update('aiZhagan.upgradeResult', `已安装 ${require('./package.json').version}`);
+        } else {
+          const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+          const stateDir = path.resolve(path.dirname(paths.config), config.state_dir || '.local');
+          const args = ['--config', paths.config, '--runtime-dir', installRoot, '--state-dir', stateDir];
+          const targetVersion = config.config_version === '1.0' ? '1.0' : '0.3';
+          const snapshotId = await upgradeManagedBundle({
+            stop: async () => {
+              if (running) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+            },
+            prepare: async () => {
+              const result = await execFileAsync(paths.executable, ['upgrade-prepare', ...args,
+                '--target-version', targetVersion], { windowsHide: true });
+              const id = result.stdout.trim();
+              if (!/^[0-9a-f]{32}$/.test(id)) throw new Error('升级快照标识无效。');
+              return id;
+            },
+            install: async () => installBundledRuntime(bundleRoot, installRoot, require('./package.json').version),
+            complete: async (id) => execFileAsync(paths.executable, ['upgrade-complete', ...args,
+              '--snapshot-id', id], { windowsHide: true }),
+            start: async () => startManaged(paths),
+            finalize: async (id) => execFileAsync(paths.executable, ['upgrade-finalize', ...args,
+              '--snapshot-id', id], { windowsHide: true }),
+            quiesce: async () => {
+              if (await managedStatus(paths.config)) await execFileAsync(paths.executable,
+                ['stop', '--config', paths.config], { windowsHide: true });
+            },
+            restore: async (id) => {
+              const original = path.join(stateDir, 'upgrade-snapshots', id, 'runtime', 'ai-zhagan.exe');
+              await execFileAsync(original, ['upgrade-restore', ...args, '--snapshot-id', id], { windowsHide: true });
+            },
+            restartOriginal: async () => { if (running) await startManaged(paths); },
+          });
+          upgraded = true;
+          await extensionContext.globalState.update('aiZhagan.upgradeResult',
+            `已升级至 ${require('./package.json').version}；备份 ${snapshotId.slice(0, 8)} 已保留`);
+          await extensionContext.globalState.update('aiZhagan.lastSnapshotId', snapshotId);
+          if (!running) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
         }
+      } catch (error) {
+        await extensionContext.globalState.update('aiZhagan.upgradeResult',
+          `${upgraded ? '升级已完成，但后续操作失败' : '升级未完成'}：${error.message}`);
         throw error;
       }
     }
@@ -565,9 +636,10 @@ async function installManagedRuntime() {
   return paths;
 }
 
-async function ensureManagedRuntime() {
+async function ensureManagedRuntime(force = false) {
+  if (force && managedInstallPromise) await managedInstallPromise;
   if (!managedInstallPromise) {
-    managedInstallPromise = installManagedRuntime().finally(() => { managedInstallPromise = undefined; });
+    managedInstallPromise = installManagedRuntime(force).finally(() => { managedInstallPromise = undefined; });
   }
   return managedInstallPromise;
 }
@@ -641,6 +713,8 @@ async function pairManagedRuntime(selectedFolder = null) {
   if (!project) throw new Error('本机服务未能登记当前工作区。');
   await saveConnection(binding.folder, serviceUrl, project.id, credentials.admin_token);
   await extensionContext.secrets.store(MANAGED_TOKEN_KEY, credentials.admin_token);
+  managedRestartPolicy.resume();
+  await extensionContext.globalState.update('aiZhagan.manualServiceStop', false);
   setStatus('已连接', `${binding.folder.name} → ${project.name || project.id}`);
   homeSelectedProjectId = project.id;
   await refreshHome();
@@ -668,17 +742,29 @@ async function homeConnection() {
 }
 
 async function currentHomeState() {
-  const runtimeInstalled = fs.existsSync(managedRuntimePaths().executable);
-  const managedConfigExists = fs.existsSync(managedRuntimePaths().config);
+  const paths = managedRuntimePaths();
+  const runtimeInstalled = fs.existsSync(paths.executable);
+  const managedConfigExists = fs.existsSync(paths.config);
+  const serviceRunning = managedConfigExists && Boolean(await managedStatus(paths.config));
+  const loginStartup = runtimeInstalled && managedConfigExists
+    && await hasLoginStartup(paths.executable, paths.config, execFileAsync);
+  let installedVersion = null;
+  try { installedVersion = JSON.parse(fs.readFileSync(path.join(path.dirname(paths.executable), 'installed.json'), 'utf8')).version; }
+  catch { /* Unknown installation. */ }
+  const shared = { runtimeInstalled, managedConfigExists, serviceRunning, loginStartup,
+    installedVersion, bundledVersion: require('./package.json').version,
+    upgradeResult: extensionContext.globalState.get('aiZhagan.upgradeResult') || null,
+    lastSnapshotId: extensionContext.globalState.get('aiZhagan.lastSnapshotId') || null,
+    diagnosis: homeDiagnosis || null };
   try {
     const client = await homeConnection();
     const status = client ? await client.getStatus() : null;
     const selected = status && (status.projects.find((item) => item.id === homeSelectedProjectId)
       || status.projects[0]);
-    return { view: deriveHomeView({ runtimeInstalled, managedConfigExists, status, selectedProjectId: homeSelectedProjectId,
+    return { view: deriveHomeView({ ...shared, status, selectedProjectId: homeSelectedProjectId,
       scopePreview: selected && homeScopePreviews.get(selected.id) }), client };
   } catch (error) {
-    return { view: deriveHomeView({ runtimeInstalled, managedConfigExists, error: error.message }), client: null };
+    return { view: deriveHomeView({ ...shared, error: error.message }), client: null };
   }
 }
 
@@ -803,15 +889,140 @@ async function migrateManagedWeb() {
     else await extensionContext.secrets.store(GITHUB_CLIENT_SECRET_KEY, previousSecret);
     throw error;
   }
+  await syncLoginCredentials(paths, clientId.trim(), clientSecret);
   await refreshHome();
   vscode.window.showInformationMessage('旧网页连接记录已迁移，公网 OAuth 地址已验证。请在原 ChatGPT 连接发起一次工具调用；若提示授权，按页面重新授权。');
 }
 
+async function setupManagedWeb() {
+  const paths = managedRuntimePaths();
+  if (!fs.existsSync(paths.config)) throw new Error('请先选择项目，完成本机服务配对。');
+  const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  if (config.auth_mode === 'github') throw new Error('此服务已有网页连接。可在首页运行连接诊断。');
+  const ready = await vscode.window.showInformationMessage(
+    '请先确认 ChatGPT 账号页面可添加自托管 MCP 连接，并准备固定 HTTPS 公网地址（仅转发 MCP 端口）、GitHub OAuth App 和本人 GitHub 账号。扩展无法代替你检查网页账号权限。',
+    { modal: true }, '已确认，开始设置',
+  );
+  if (ready !== '已确认，开始设置') return;
+  const origin = await vscode.window.showInputBox({ title: '第 1 步：HTTPS 公网根地址',
+    prompt: '填写转发到本机 MCP 端口的固定 HTTPS 根地址，例如 https://mcp.example.com；不要加 /mcp。',
+    ignoreFocusOut: true, validateInput: (value) => {
+      try { prepareWebSetup(config, value, '1'); return null; } catch (error) { return error.message; }
+    } });
+  if (origin === undefined) return;
+  const username = await vscode.window.showInputBox({ title: '第 2 步：GitHub 用户名',
+    prompt: '只允许此 GitHub 账号授权访问；程序会查询并保存稳定的数字用户 ID。',
+    ignoreFocusOut: true });
+  if (username === undefined) return;
+  const owner = await resolveGithubOwner(username);
+  const clientId = await vscode.window.showInputBox({ title: '第 3 步：GitHub OAuth App Client ID',
+    prompt: `OAuth App 回调地址应为 ${new URL(origin).origin}/auth/callback。Client ID 保存在 VS Code 凭据库。`,
+    ignoreFocusOut: true, validateInput: (value) => value.trim() ? null : 'Client ID 不能为空。' });
+  if (clientId === undefined) return;
+  const clientSecret = await vscode.window.showInputBox({ title: '第 4 步：GitHub OAuth App Client Secret',
+    prompt: 'Secret 仅保存在本机凭据库，不写入项目配置。', password: true,
+    ignoreFocusOut: true, validateInput: (value) => value ? null : 'Client Secret 不能为空。' });
+  if (clientSecret === undefined) return;
+  const next = prepareWebSetup(config, origin, owner.id);
+  const approved = await vscode.window.showInformationMessage(
+    `将 ${next.public_url}/mcp 用作网页连接地址，仅允许 GitHub 账号 ${owner.login}（ID ${owner.id}）。当前项目授权会保留。确认 HTTPS 转发和 OAuth App 回调地址已配置？`,
+    { modal: true }, '保存并验证',
+  );
+  if (approved !== '保存并验证') return;
+  await ensureManagedRuntime();
+  const previousId = await extensionContext.secrets.get(GITHUB_CLIENT_ID_KEY);
+  const previousSecret = await extensionContext.secrets.get(GITHUB_CLIENT_SECRET_KEY);
+  let wasRunning = false;
+  try {
+    await extensionContext.secrets.store(GITHUB_CLIENT_ID_KEY, clientId.trim());
+    await extensionContext.secrets.store(GITHUB_CLIENT_SECRET_KEY, clientSecret);
+    await executeWebSetup(paths.config, next, {
+      stop: async () => {
+        wasRunning = Boolean(await checkManagedPorts(paths));
+        if (wasRunning) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+      },
+      start: async () => startManaged(paths, { clientId: clientId.trim(), clientSecret }),
+      probe: async () => {
+        for (const suffix of ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/mcp']) {
+          const response = await fetch(`${next.public_url}${suffix}`, { signal: AbortSignal.timeout(8000) });
+          if (!response.ok) throw new Error(`公网 OAuth 地址 ${suffix} 返回 HTTP ${response.status}；请检查 HTTPS 转发。`);
+        }
+      },
+      quiesce: async () => {
+        if (await managedStatus(paths.config)) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+      },
+      restore: async () => { if (wasRunning) await startManaged(paths, { clientId: previousId, clientSecret: previousSecret }); },
+    });
+  } catch (error) {
+    if (previousId === undefined) await extensionContext.secrets.delete(GITHUB_CLIENT_ID_KEY);
+    else await extensionContext.secrets.store(GITHUB_CLIENT_ID_KEY, previousId);
+    if (previousSecret === undefined) await extensionContext.secrets.delete(GITHUB_CLIENT_SECRET_KEY);
+    else await extensionContext.secrets.store(GITHUB_CLIENT_SECRET_KEY, previousSecret);
+    throw error;
+  }
+  await syncLoginCredentials(paths, clientId.trim(), clientSecret);
+  await refreshHome();
+  await vscode.env.clipboard.writeText(`${next.public_url}/mcp`);
+  vscode.window.showInformationMessage('公网 OAuth 地址已验证，MCP 地址已复制。请在 ChatGPT 添加自托管连接，完成 GitHub 授权，再在本页验证真实工具调用。');
+}
+
+async function diagnoseManagedConnection() {
+  const paths = managedRuntimePaths();
+  const runtimeInstalled = fs.existsSync(paths.executable);
+  const configExists = fs.existsSync(paths.config);
+  let config = null;
+  if (configExists) config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  const owned = config && await managedStatus(paths.config);
+  const portsOccupied = Boolean(config && !owned
+    && (await portOpen(config.admin_port) || await portOpen(config.mcp_port)));
+  let publicReachable = null;
+  if (owned && config.public_url) {
+    try {
+      for (const suffix of ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/mcp']) {
+        const response = await fetch(`${config.public_url}${suffix}`, { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) throw new Error('public discovery failed');
+      }
+      publicReachable = true;
+    } catch { publicReachable = false; }
+  }
+  homeDiagnosis = classifyConnection({ runtimeInstalled, configExists, owned: Boolean(owned),
+    portsOccupied, authMode: config && config.auth_mode, publicUrl: config && config.public_url,
+    publicReachable, health: owned?.health || {} });
+  await refreshHome();
+  return homeDiagnosis;
+}
+
+async function exportManagedDiagnostics() {
+  const paths = managedRuntimePaths();
+  if (!fs.existsSync(paths.config) || !fs.existsSync(paths.executable)) {
+    throw new Error('请先安装并初始化本机服务。');
+  }
+  const preview = await execFileAsync(paths.executable, ['diagnostics-preview', '--config', paths.config], { windowsHide: true });
+  const summary = JSON.parse(preview.stdout);
+  const accepted = await vscode.window.showInformationMessage(
+    `将导出 ${summary.event_count} 条近期结构化事件和服务状态。默认排除源码、令牌、OAuth 响应、账号身份与本机路径。`,
+    { modal: true }, '选择保存位置',
+  );
+  if (accepted !== '选择保存位置') return;
+  const destination = await vscode.window.showSaveDialog({
+    filters: { ZIP: ['zip'] }, saveLabel: '导出脱敏诊断包',
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), `ai-zhagan-diagnostics-${Date.now()}.zip`)),
+  });
+  if (!destination) return;
+  if (destination.scheme !== 'file') throw new Error('诊断包只能保存到本机文件。');
+  await execFileAsync(paths.executable, ['diagnostics-export', '--config', paths.config,
+    '--output', destination.fsPath], { windowsHide: true });
+  vscode.window.showInformationMessage(`脱敏诊断包已保存：${destination.fsPath}`);
+}
+
 async function handleHomeAction(action) {
+  if (!['diagnose', 'refresh', 'export-diagnostics', 'repair'].includes(action)) homeDiagnosis = undefined;
   if (action === 'install') { await ensureManagedRuntime(); return refreshHome(); }
   if (action === 'start-service') {
     const paths = await ensureManagedRuntime();
     if (!await checkManagedPorts(paths)) await startManaged(paths);
+    managedRestartPolicy.resume();
+    await extensionContext.globalState.update('aiZhagan.manualServiceStop', false);
     let paired = false;
     try {
       const client = await homeConnection();
@@ -824,8 +1035,95 @@ async function handleHomeAction(action) {
     }
     return refreshHome();
   }
+  if (action === 'stop-service') {
+    const paths = managedRuntimePaths();
+    if (!fs.existsSync(paths.config) || !fs.existsSync(paths.executable)) return refreshHome();
+    const owned = await managedStatus(paths.config);
+    if (owned) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+    await extensionContext.globalState.update('aiZhagan.manualServiceStop', true);
+    managedRestartPolicy.pause();
+    return refreshHome();
+  }
+  if (action === 'toggle-login-startup') {
+    const paths = await ensureManagedRuntime();
+    if (!fs.existsSync(paths.config)) throw new Error('请先选择项目并配置本机服务。');
+    const enabled = await hasLoginStartup(paths.executable, paths.config, execFileAsync);
+    if (!enabled) {
+      const choice = await vscode.window.showInformationMessage(
+        '启用后，Windows 登录时会在后台启动 AI Zhagan。GitHub OAuth 凭据将存入当前 Windows 用户的凭据管理器，注册表仅保存程序和配置路径。',
+        { modal: true }, '开启开机启动',
+      );
+      if (choice !== '开启开机启动') return;
+      const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+      if (config.auth_mode === 'github') {
+        const clientId = await extensionContext.secrets.get(GITHUB_CLIENT_ID_KEY);
+        const clientSecret = await extensionContext.secrets.get(GITHUB_CLIENT_SECRET_KEY);
+        if (!clientId || !clientSecret) throw new Error('缺少 GitHub OAuth 凭据，请先完成网页连接设置。');
+        await runCredentialCommand(paths, 'credential-store', { client_id: clientId, client_secret: clientSecret });
+      }
+      await setLoginStartup(true, paths.executable, paths.config, execFileAsync);
+    } else {
+      await setLoginStartup(false, paths.executable, paths.config, execFileAsync);
+      await runCredentialCommand(paths, 'credential-clear');
+    }
+    return refreshHome();
+  }
   if (action === 'pick-folder') return chooseOrAuthorizeFolder();
   if (action === 'migrate-web') return migrateManagedWeb();
+  if (action === 'setup-web') return setupManagedWeb();
+  if (action === 'diagnose') return diagnoseManagedConnection();
+  if (action === 'repair') {
+    if (!homeDiagnosis || !['install', 'pick-folder', 'start-service', 'setup-web', 'verify'].includes(homeDiagnosis.repair)) {
+      throw new Error('当前没有可自动执行的安全修复操作。');
+    }
+    const remedy = homeDiagnosis.repair;
+    homeDiagnosis = undefined;
+    return handleHomeAction(remedy);
+  }
+  if (action === 'export-diagnostics') return exportManagedDiagnostics();
+  if (action === 'upgrade-runtime') {
+    await ensureManagedRuntime(true);
+    await extensionContext.globalState.update('aiZhagan.rollbackHold', false);
+    const installed = JSON.parse(fs.readFileSync(path.join(path.dirname(managedRuntimePaths().executable), 'installed.json'), 'utf8'));
+    if (installed.version === require('./package.json').version) {
+      await extensionContext.globalState.update('aiZhagan.upgradeResult',
+        `已安装当前扩展附带版本 ${installed.version}`);
+    }
+    return refreshHome();
+  }
+  if (action === 'restore-upgrade') {
+    const id = extensionContext.globalState.get('aiZhagan.lastSnapshotId');
+    if (!id || !/^[0-9a-f]{32}$/.test(id)) throw new Error('没有可回退的已验证升级备份。');
+    const approved = await vscode.window.showInformationMessage(
+      `回退到备份 ${id.slice(0, 8)}？仅当升级后配置和修改记录未变化时才允许回退；项目文件不会被自动覆盖。`,
+      { modal: true }, '确认回退',
+    );
+    if (approved !== '确认回退') return;
+    const paths = managedRuntimePaths();
+    const config = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+    const stateDir = path.resolve(path.dirname(paths.config), config.state_dir || '.local');
+    const running = await checkManagedPorts(paths);
+    if (running) await execFileAsync(paths.executable, ['stop', '--config', paths.config], { windowsHide: true });
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-rollback-'));
+    try {
+      const runner = path.join(scratch, 'runtime');
+      fs.cpSync(path.dirname(paths.executable), runner, { recursive: true });
+      await execFileAsync(path.join(runner, 'ai-zhagan.exe'), ['upgrade-rollback',
+        '--config', paths.config, '--runtime-dir', path.dirname(paths.executable),
+        '--state-dir', stateDir, '--snapshot-id', id], { windowsHide: true });
+      await extensionContext.globalState.update('aiZhagan.rollbackHold', true);
+      await extensionContext.globalState.update('aiZhagan.lastSnapshotId', null);
+      await extensionContext.globalState.update('aiZhagan.upgradeResult', `已回退到备份 ${id.slice(0, 8)}；升级已暂停，需手动点击“检查并安装附带版本”。`);
+    } catch (error) {
+      if (running && !await managedStatus(paths.config)
+          && !fs.existsSync(path.join(stateDir, 'upgrade-in-progress.json'))) {
+        try { await startManaged(paths); } catch { /* Preserve rollback error. */ }
+      }
+      throw error;
+    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+    if (running) await startManaged(paths);
+    return refreshHome();
+  }
   if (action === 'refresh') return refreshHome();
   if (action === 'web-guide') {
     return vscode.commands.executeCommand('vscode.open', vscode.Uri.file(
@@ -1097,6 +1395,27 @@ async function openAssistant() {
   await vscode.commands.executeCommand('workbench.action.browser.open', target.url);
 }
 
+async function recoverManagedService() {
+  if (managedRecoveryPromise) return managedRecoveryPromise;
+  managedRecoveryPromise = (async () => {
+    const paths = managedRuntimePaths();
+    if (globalClosing || !managedRestartPolicy.canRestart()
+        || extensionContext.globalState.get('aiZhagan.manualServiceStop')
+        || !fs.existsSync(paths.config) || !await extensionContext.secrets.get(MANAGED_TOKEN_KEY)) return;
+    if (await managedStatus(paths.config)) { await refreshHome(); return; }
+    try {
+      await ensureManagedRuntime();
+      if (!await checkManagedPorts(paths)) await startManaged(paths);
+      await refreshHome();
+    } catch (error) {
+      managedRestartPolicy.recordCrash();
+      setStatus('需要检查', `本机服务恢复失败：${error.message}`);
+      await refreshHome();
+    }
+  })().finally(() => { managedRecoveryPromise = undefined; });
+  return managedRecoveryPromise;
+}
+
 function activate(context) {
   extensionContext = context;
   homeSelectedProjectId = context.globalState.get('aiZhagan.homeProjectId');
@@ -1162,21 +1481,16 @@ function activate(context) {
     vscode.workspace.onDidSaveTextDocument(publishAllReviewReadiness),
     vscode.window.onDidChangeTextEditorSelection((event) => scheduleAutoSync(event.textEditor.document)),
     vscode.window.onDidChangeActiveTextEditor(cancelScheduledSyncs),
+    vscode.window.onDidChangeWindowState((state) => { if (state.focused) void recoverManagedService(); }),
     vscode.languages.onDidChangeDiagnostics((event) => {
       const editor = vscode.window.activeTextEditor;
       if (editor && event.uris.some((uri) => uri.toString() === editor.document.uri.toString())) scheduleAutoSync(editor.document);
     }),
   );
   if (process.env.AI_ZHAGAN_EXTENSION_TEST !== '1') {
-    void (async () => {
-      const paths = managedRuntimePaths();
-      if (!fs.existsSync(paths.config) || !await context.secrets.get(MANAGED_TOKEN_KEY)) return;
-      try {
-        await ensureManagedRuntime();
-        if (!await checkManagedPorts(paths)) await startManaged(paths);
-        await refreshHome();
-      } catch (error) { setStatus('需要检查', `本机服务恢复失败：${error.message}`); }
-    })();
+    void recoverManagedService();
+    const recoveryTimer = setInterval(() => { void recoverManagedService(); }, 60000);
+    context.subscriptions.push({ dispose: () => clearInterval(recoveryTimer) });
   }
   if (process.env.AI_ZHAGAN_EXTENSION_TEST === '1') {
     return {

@@ -2,7 +2,7 @@
 
 让支持 MCP 的 AI 对话按需读取经过明确授权的本机项目。核心服务独立于 IDE，首个正式适配器为 VS Code。
 
-项目以 MIT 许可证开源。当前源码版本为 **0.3.1 本地候选版**：VSIX 内置 Windows x64 运行包，VS Code 首页可选目录、管理授权、迁移旧网页连接并查看连接状态；公开分发、真实网页闭环和稳定升级尚未通过发布验收。[英文说明](README.en.md) · [兼容性](docs/compatibility.md) · [v1 发布评审](docs/acceptance/v1.md)
+项目以 MIT 许可证开源。当前源码版本为 **0.4.0 本地候选版**：VSIX 内置 Windows x64 运行包，VS Code 首页可选目录、设置或迁移网页连接、管理服务、诊断及回退升级；公开分发与真实网页闭环尚未通过发布验收。[英文说明](README.en.md) · [兼容性](docs/compatibility.md) · [v1 发布评审](docs/acceptance/v1.md)
 
 当前提供项目目录、固定字符串搜索、分段读取、Git 状态和 diff、明确授权的编辑器上下文、修改建议及本机审阅应用、独立管理页面。没有模型 API 调用，也没有远程直接写文件或任意执行命令工具。
 
@@ -22,7 +22,7 @@ flowchart LR
 
 ## 快速开始（Windows）
 
-安装 `extensions/vscode/ai-zhagan-context-0.3.1.vsix` 后，在 VS Code 运行 `AI Zhagan: 打开首页`，点击“安装本机服务”，再点击“选择文件夹”并确认只读授权。无需 PowerShell、Python 或 Node。已有旧版网页连接可从首页选择“迁移旧网页连接”。界面可切换项目、暂停或移除授权，并预览可访问文件数量。完整步骤见 [三步快速开始](docs/quickstart.md)。
+安装 `extensions/vscode/ai-zhagan-context-0.4.0.vsix` 后，在 VS Code 运行 `AI Zhagan: 打开首页`，点击“安装本机服务”，再点击“选择文件夹”并确认只读授权。无需 PowerShell、Python 或 Node。首次网页接入点击“设置网页连接”，旧版连接点击“迁移旧网页连接”。首页可启停服务、选择开机启动、检查连接、导出脱敏诊断包及查看升级回退。完整步骤见 [三步快速开始](docs/quickstart.md)。
 
 以下命令仅用于源码开发和手动服务管理。
 
@@ -47,7 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\token.ps1
 
 ## VS Code 扩展
 
-在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.3.1.vsix`。
+在“扩展 → … → 从 VSIX 安装”选择 `extensions/vscode/ai-zhagan-context-0.4.0.vsix`。
 
 1. 运行 `AI Zhagan: 打开首页`，安装内置运行包并通过系统目录选择器授权文件夹；原“三步向导”命令也会打开首页。
 2. 首页自动完成受管理服务配对，不需复制管理令牌。选择别的目录会创建独立授权，不沿用旧目录的修改权限；沿用手动服务时执行 `AI Zhagan: 配置连接`。
@@ -97,14 +97,16 @@ MCP 地址为 `http://127.0.0.1:8765/mcp`，需要 **独立的 MCP 令牌**，�
 
 本地令牌模式不配置给公网网页。服务没有匿名文件读取接口，也不会把管理接口放到 MCP 端口。
 
-## 以后连接官方网页
+## 连接 ChatGPT 网页
+
+建议从 VS Code 首页点击“设置网页连接”：向导依次收集 HTTPS 根地址、GitHub 用户名和 OAuth App 凭据，自动查询数字 ID，验证公网 OAuth 发现地址，并复制 MCP 地址。网页添加连接、GitHub 授权和真实工具调用仍由你本人完成。首页“检查连接”会区分本机服务、端口、公网、账号及工具调用问题；仅对本机可确认安全的步骤提供“尝试修复”。
+
+以下为手动部署背景，适合已有域名与 OAuth App 的用户：
 
 1. 准备域名和 Cloudflare 命名 Tunnel，固定主机名只映射 `127.0.0.1:8765`；**不要映射管理端口 8766**。
 2. 创建 GitHub OAuth App，回调 URL 为 `https://你的域名/auth/callback`。
-3. 停止服务，编辑 `config/local.json`：`auth_mode` 设为 `github`，填写 HTTPS `public_url` 和仅含本人数字用户 ID 的 `github_user_ids`。
-4. 在启动进程环境中设置 `PROJECT_MCP_GITHUB_CLIENT_ID`、`PROJECT_MCP_GITHUB_CLIENT_SECRET`；不要将它们提交到源码。OAuth 持久化使用加密存储。
-5. 执行 `.venv\Scripts\project-assistant.exe doctor` 检查配置，再启动服务。
-6. ChatGPT Developer mode 和 Claude 自定义连接器分别添加 `https://你的域名/mcp`，完成各自授权。
+3. 在首页完成网页向导；CLI 用户可停止服务后在配置中设置 `auth_mode`、HTTPS `public_url` 和本人数字用户 ID，并通过环境变量提供 OAuth 凭据。
+4. 在支持自托管 MCP 的 ChatGPT 账号中添加 `https://你的域名/mcp`，完成授权，再从首页复制验证提示词执行 `verify_connection`。
 
 `public_url` 与本地令牌模式不能共用，配置会拒绝启动。缺失 OAuth 参数也会拒绝启动。Cloudflare 客户端沿用其官方配置，本项目不会在缺少域名和凭据时自动建立隧道。ChatGPT 要维持普通 Chat 路径；MCP 不会把网页订阅转成任意 IDE 的原生模型 API。
 

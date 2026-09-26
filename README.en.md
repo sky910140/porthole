@@ -2,7 +2,7 @@
 
 AI Zhagan lets an MCP-capable web assistant read only the local projects you explicitly authorize. The core service runs separately from the editor; the first adapter is for VS Code. The code is MIT licensed.
 
-**Current status: local 0.3.1 candidate.** The Windows x64 VSIX bundles the runtime and provides a VS Code home page for installation, folder selection, project authorization, guided migration of an existing web OAuth connection, and connection status. Public distribution, a complete live ChatGPT round trip, clean-machine upgrade, and long-running stability gates remain open. See the [compatibility matrix](docs/compatibility.md) and [v1 release review](docs/acceptance/v1.md). No public release or marketplace listing has been made.
+**Current status: local 0.4.0 candidate.** The Windows x64 VSIX bundles the runtime and provides a VS Code home page for installation, folder authorization, first-time web setup or OAuth migration, service control, diagnostics, and guarded upgrade rollback. Public distribution, a complete live ChatGPT round trip, clean-machine upgrade, and long-running stability gates remain open. See the [compatibility matrix](docs/compatibility.md) and [v1 release review](docs/acceptance/v1.md). No public release or marketplace listing has been made.
 
 ```mermaid
 flowchart LR

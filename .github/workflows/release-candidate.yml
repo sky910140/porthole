@@ -42,7 +42,7 @@ jobs:
         run: |
           .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
           .\scripts\package-extension.ps1
-          .\.venv\Scripts\python.exe scripts\verify-vsix.py extensions\vscode\ai-zhagan-context-0.3.1.vsix
+          .\.venv\Scripts\python.exe scripts\verify-vsix.py extensions\vscode\ai-zhagan-context-0.4.0.vsix
           .\.venv\Scripts\python.exe scripts\verify-web-migration.py artifacts\runtime\dist\ai-zhagan\ai-zhagan.exe
           $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
           $vsix = Get-ChildItem extensions\vscode\*.vsix | Select-Object -First 1

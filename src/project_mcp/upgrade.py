@@ -143,7 +143,7 @@ class UpgradeManager:
                 self.marker.unlink(missing_ok=True)
             raise
 
-    def _snapshot(self, snapshot_id: str) -> Path:
+    def _snapshot(self, snapshot_id: str, *, require_marker: bool = True) -> Path:
         if not re.fullmatch(r"[0-9a-f]{32}", snapshot_id):
             raise UpgradeError("invalid snapshot id")
         snapshot = self.snapshot_root / snapshot_id
@@ -158,9 +158,10 @@ class UpgradeManager:
         }
         if actual != files or any(path.is_symlink() for path in snapshot.rglob("*")):
             raise UpgradeError("upgrade snapshot checksum mismatch")
-        marker = json.loads(self.marker.read_text(encoding="utf-8"))
-        if marker.get("snapshot_id") != snapshot_id:
-            raise UpgradeError("another upgrade is active")
+        if require_marker:
+            marker = json.loads(self.marker.read_text(encoding="utf-8"))
+            if marker.get("snapshot_id") != snapshot_id:
+                raise UpgradeError("another upgrade is active")
         return snapshot
 
     def restore_snapshot(self, snapshot_id: str) -> None:
@@ -209,4 +210,55 @@ class UpgradeManager:
         os.replace(staged, self.config_path)
         if not health_check():
             raise UpgradeError("new runtime health check failed; snapshot remains available")
+        staged_marker = self.marker.with_suffix(".pending")
+        staged_marker.write_text(json.dumps({**marker, "phase": "awaiting_verification"}), encoding="utf-8")
+        os.replace(staged_marker, self.marker)
+
+    def finalize_upgrade(self, snapshot_id: str, *, health_check) -> None:
+        self._snapshot(snapshot_id)
+        marker = json.loads(self.marker.read_text(encoding="utf-8"))
+        if marker.get("phase") != "awaiting_verification":
+            raise UpgradeError("offline upgrade checks have not completed")
+        if not health_check():
+            raise UpgradeError("service health check failed; snapshot remains available")
+        receipt = self.verified_receipt(snapshot_id)
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        staged = receipt.with_suffix(".tmp")
+        staged.write_text(json.dumps({
+            "snapshot_id": snapshot_id,
+            "config_sha256": _sha256(self.config_path),
+            "runtime_sha256": _sha256(self.runtime_dir / "ai-zhagan.exe"),
+            "changes": _changes_fingerprint(self.db_path),
+        }), encoding="utf-8")
+        os.replace(staged, receipt)
         self.marker.unlink()
+
+    def verified_receipt(self, snapshot_id: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{32}", snapshot_id):
+            raise UpgradeError("invalid snapshot id")
+        return self.state_dir / "verified-upgrades" / f"{snapshot_id}.json"
+
+    def rollback_verified_snapshot(self, snapshot_id: str) -> None:
+        self._require_stopped()
+        if self.marker.exists():
+            raise UpgradeError("another upgrade is active")
+        receipt = self.verified_receipt(snapshot_id)
+        if not receipt.is_file():
+            raise UpgradeError("verified upgrade receipt is missing")
+        recorded = json.loads(receipt.read_text(encoding="utf-8"))
+        if recorded.get("snapshot_id") != snapshot_id:
+            raise UpgradeError("verified upgrade receipt does not match")
+        if _sha256(self.config_path) != recorded.get("config_sha256"):
+            raise UpgradeError("configuration changed since upgrade; refusing rollback")
+        if _sha256(self.runtime_dir / "ai-zhagan.exe") != recorded.get("runtime_sha256"):
+            raise UpgradeError("runtime changed since upgrade; refusing rollback")
+        if _changes_fingerprint(self.db_path) != recorded.get("changes"):
+            raise UpgradeError("new changes exist; refusing silent rollback")
+        snapshot = self._snapshot(snapshot_id, require_marker=False)
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        fd = os.open(self.marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"snapshot_id": snapshot_id,
+                       "target_version": manifest["target_version"]}, stream)
+        self.restore_snapshot(snapshot_id)
+        receipt.unlink()

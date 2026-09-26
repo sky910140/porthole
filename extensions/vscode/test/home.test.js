@@ -13,7 +13,7 @@ test('home gives one actionable step for installation, authorization and web ver
     health: { local_service: { state: 'ok' }, transport: { state: 'unknown' },
       oauth: { state: 'unknown' }, tool_call: { state: 'unknown' } },
   }, selectedProjectId: 'demo' });
-  assert.equal(local.primaryAction, 'web-guide');
+  assert.equal(local.primaryAction, 'setup-web');
   assert.equal(local.project.id, 'demo');
   assert.match(local.message, /网页/);
   const verified = deriveHomeView({ runtimeInstalled: true, status: {
@@ -69,4 +69,30 @@ test('configured OAuth still requires a real ChatGPT tool call before claiming s
       public_url: 'https://example.test', health: {} } });
   assert.equal(view.title, '网页连接待验证');
   assert.equal(view.primaryAction, 'verify');
+});
+
+test('home directs failed HTTPS transport to diagnosis before tool verification', () => {
+  const view = deriveHomeView({ runtimeInstalled: true, managedConfigExists: true,
+    status: { projects: [{ id: 'p', root: 'D:\\p' }], auth_mode: 'github',
+      public_url: 'https://example.test', health: { transport: { state: 'failed' } } } });
+  assert.equal(view.primaryAction, 'diagnose');
+  assert.match(view.message, /公网/);
+});
+
+test('home surfaces managed service and login-startup controls', () => {
+  const html = homeHtml('test-nonce');
+  assert.match(html, /data-action="stop-service"/);
+  assert.match(html, /data-action="toggle-login-startup"/);
+  const view = deriveHomeView({ runtimeInstalled: true, managedConfigExists: true,
+    serviceRunning: false, loginStartup: true });
+  assert.equal(view.serviceRunning, false);
+  assert.equal(view.loginStartup, true);
+});
+
+test('home exposes upgrade and guarded rollback controls', () => {
+  const html = homeHtml('test-nonce');
+  assert.match(html, /data-action="upgrade-runtime"/);
+  assert.match(html, /data-action="restore-upgrade"/);
+  const view = deriveHomeView({ runtimeInstalled: true, lastSnapshotId: 'a'.repeat(32) });
+  assert.equal(view.lastSnapshotId, 'a'.repeat(32));
 });

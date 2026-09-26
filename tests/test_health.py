@@ -87,7 +87,8 @@ def test_status_exposes_version_capabilities_and_layered_health(tmp_path):
         assert response.status_code == 200
         status = response.json()
         assert status["protocol_version"].split(".")[0] == "1"
-        assert status["service_version"] == "0.3.1"
+        from project_mcp import __version__
+        assert status["service_version"] == __version__
         assert "layered_health" in status["capabilities"]
         assert status["health"]["local_service"]["state"] == "ok"
         assert status["health"]["tool_call"]["state"] == "unknown"

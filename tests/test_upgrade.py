@@ -93,7 +93,7 @@ def test_upgrade_blocks_active_transactions_and_corrupt_blobs(tmp_path):
 def test_failed_upgrade_restores_snapshot_but_new_changes_block_rollback(tmp_path):
     manager, store, _content, config, root = setup_upgrade(tmp_path)
     snapshot_id = manager.prepare_upgrade("0.3")
-    store = None
+    del store
     gc.collect()  # A stopped service has no open database handles on Windows.
     config.write_text("broken")
     (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"broken-runtime")
@@ -132,7 +132,56 @@ def test_complete_requires_health_and_active_marker_is_preserved(tmp_path):
     assert manager.marker.is_file()
     assert json.loads(config.read_text())["config_version"] == "0.3"
     manager.complete_upgrade(snapshot_id, health_check=lambda: True)
+    assert json.loads(manager.marker.read_text())["phase"] == "awaiting_verification"
+    with pytest.raises(UpgradeError, match="service health"):
+        manager.finalize_upgrade(snapshot_id, health_check=lambda: False)
+    manager.finalize_upgrade(snapshot_id, health_check=lambda: True)
     assert not manager.marker.exists()
+
+
+def test_failed_start_after_offline_upgrade_can_restore_snapshot(tmp_path):
+    manager, store, _content, config, _root = setup_upgrade(tmp_path)
+    snapshot_id = manager.prepare_upgrade("0.3")
+    del store
+    gc.collect()
+    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"new-runtime")
+    manager.complete_upgrade(snapshot_id, health_check=lambda: True)
+    manager.restore_snapshot(snapshot_id)
+    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"old-runtime"
+    assert json.loads(config.read_text()).get("config_version") is None
+
+
+def test_verified_upgrade_can_be_rolled_back_only_without_new_config_or_changes(tmp_path):
+    manager, store, _content, config, _root = setup_upgrade(tmp_path)
+    snapshot_id = manager.prepare_upgrade("0.3")
+    del store
+    gc.collect()
+    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"new-runtime")
+    manager.complete_upgrade(snapshot_id, health_check=lambda: True)
+    manager.finalize_upgrade(snapshot_id, health_check=lambda: True)
+    assert manager.verified_receipt(snapshot_id).is_file()
+    config.write_text(config.read_text() + "\n")
+    with pytest.raises(UpgradeError, match="configuration changed"):
+        manager.rollback_verified_snapshot(snapshot_id)
+    config.write_text(config.read_text().rstrip())
+    manager.rollback_verified_snapshot(snapshot_id)
+    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"old-runtime"
+    assert not manager.verified_receipt(snapshot_id).exists()
+
+
+def test_tampered_verified_snapshot_does_not_leave_an_upgrade_marker(tmp_path):
+    manager, store, _content, _config, _root = setup_upgrade(tmp_path)
+    snapshot_id = manager.prepare_upgrade("0.3")
+    del store
+    gc.collect()
+    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"new-runtime")
+    manager.complete_upgrade(snapshot_id, health_check=lambda: True)
+    manager.finalize_upgrade(snapshot_id, health_check=lambda: True)
+    (manager.snapshot_root / snapshot_id / "runtime" / "ai-zhagan.exe").write_bytes(b"tampered")
+    with pytest.raises(UpgradeError, match="checksum"):
+        manager.rollback_verified_snapshot(snapshot_id)
+    assert not manager.marker.exists()
+    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"new-runtime"
 
 
 def test_missing_referenced_blob_blocks_snapshot(tmp_path):

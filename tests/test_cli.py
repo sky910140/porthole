@@ -9,6 +9,36 @@ from pathlib import Path
 import httpx
 
 
+def test_credential_store_reads_stdin_without_echo_or_arguments(tmp_path, monkeypatch, capsys):
+    import io
+
+    from project_mcp import cli
+    from project_mcp.config import Settings, save_config
+
+    config = tmp_path / "config.json"
+    save_config(config, Settings())
+    received = []
+    monkeypatch.setattr("project_mcp.auth.store_github_credentials", lambda state, client, secret:
+                        received.append((state, client, secret)))
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"client_id":"id","client_secret":"private"}'))
+    assert cli.main(["credential-store", "--config", str(config)]) == 0
+    assert received[0][1:] == ("id", "private")
+    assert "private" not in capsys.readouterr().out
+
+
+def test_upgrade_marker_blocks_start_until_offline_checks_pass(tmp_path):
+    from project_mcp.cli import _upgrade_blocks_start
+
+    state = tmp_path / "state"
+    state.mkdir()
+    marker = state / "upgrade-in-progress.json"
+    assert _upgrade_blocks_start(state) is False
+    marker.write_text('{"snapshot_id":"abc"}')
+    assert _upgrade_blocks_start(state) is True
+    marker.write_text('{"snapshot_id":"abc","phase":"awaiting_verification"}')
+    assert _upgrade_blocks_start(state) is False
+
+
 def invoke(*args):
     env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
     return subprocess.run([sys.executable, "-m", "project_mcp.cli", *map(str,args)],

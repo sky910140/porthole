@@ -1,6 +1,8 @@
 """Authenticate with maintained providers and restrict OAuth to the configured owner."""
+import hashlib
 import os
 
+import keyring
 from cryptography.fernet import Fernet
 from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 from fastmcp.server.auth.providers.github import GitHubProvider
@@ -8,6 +10,43 @@ from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.dependencies import get_access_token
 from key_value.aio.stores.filetree import FileTreeStore, FileTreeV1KeySanitizationStrategy
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+from keyring.errors import PasswordDeleteError
+
+
+def _vault_service(state_dir):
+    identity = hashlib.sha256(str(state_dir.resolve()).encode("utf-8")).hexdigest()
+    return f"AI Zhagan GitHub OAuth {identity}"
+
+
+def load_github_credentials(state_dir):
+    service = _vault_service(state_dir)
+    client_id = keyring.get_password(service, "client_id")
+    client_secret = keyring.get_password(service, "client_secret")
+    return (client_id, client_secret) if client_id and client_secret else None
+
+
+def store_github_credentials(state_dir, client_id, client_secret):
+    if not client_id or not client_secret or len(client_id) > 256 or len(client_secret) > 4096:
+        raise ValueError("invalid GitHub OAuth credentials")
+    service = _vault_service(state_dir)
+    keyring.set_password(service, "client_id", client_id)
+    try:
+        keyring.set_password(service, "client_secret", client_secret)
+    except Exception:
+        try:
+            keyring.delete_password(service, "client_id")
+        except PasswordDeleteError:
+            pass
+        raise
+
+
+def clear_github_credentials(state_dir):
+    service = _vault_service(state_dir)
+    for name in ("client_id", "client_secret"):
+        try:
+            keyring.delete_password(service, name)
+        except PasswordDeleteError:
+            pass
 
 
 def encrypted_store(directory, secret):
@@ -63,6 +102,10 @@ def build_auth(settings, health=None):
         }})
     client_id = os.environ.get("PROJECT_MCP_GITHUB_CLIENT_ID", "")
     client_secret = os.environ.get("PROJECT_MCP_GITHUB_CLIENT_SECRET", "")
+    if not client_id and not client_secret:
+        saved = load_github_credentials(settings.state_dir)
+        if saved:
+            client_id, client_secret = saved
     if not client_id or not client_secret:
         raise ValueError("Set PROJECT_MCP_GITHUB_CLIENT_ID and PROJECT_MCP_GITHUB_CLIENT_SECRET")
     return OwnerGitHubProvider(

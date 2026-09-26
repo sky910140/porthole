@@ -1,10 +1,10 @@
 # 三步开始使用 AI Zhagan
 
-适用范围：Windows 11 x64、VS Code Stable、本地文件夹。当前提供 0.3.1 本地候选 VSIX，尚未公开发布。
+适用范围：Windows 11 x64、VS Code Stable、本地文件夹。当前提供 0.4.0 本地候选 VSIX，尚未公开发布。
 
 ## 1. 安装并打开首页
 
-在 VS Code“扩展”页面点击 `…` →“从 VSIX 安装”，选择 `extensions/vscode/ai-zhagan-context-0.3.1.vsix`。重新加载后按 `Ctrl+Shift+P`，运行 `AI Zhagan: 打开首页`。点击“安装本机服务”；运行包已包含在 VSIX 中，不需打开终端或安装 Python、Node。
+在 VS Code“扩展”页面点击 `…` →“从 VSIX 安装”，选择 `extensions/vscode/ai-zhagan-context-0.4.0.vsix`。重新加载后按 `Ctrl+Shift+P`，运行 `AI Zhagan: 打开首页`。点击“安装本机服务”；运行包已包含在 VSIX 中，不需打开终端或安装 Python、Node。
 
 ## 2. 选择项目
 
@@ -24,7 +24,9 @@
 
 然后在首页点击“复制提问模板”，将包含真实项目标识的提示词发到 ChatGPT。
 
-首次添加 ChatGPT 网页连接仍需固定 HTTPS MCP 地址、GitHub OAuth 应用、允许登录的 GitHub 数字用户 ID，以及账号侧支持添加 MCP 连接。首页“网页连接说明”会打开扩展说明；准备好这些前提后，可复制验证提示词，通过 `verify_connection` 完成真实调用。**本机安装成功不等于网页已连接。** 自托管步骤见 [README](../README.md#以后连接官方网页)。
+首次添加 ChatGPT 网页连接需要固定 HTTPS MCP 地址、GitHub OAuth 应用，以及账号侧支持添加自托管 MCP 连接。准备好后在首页点击“设置网页连接”，按提示填写地址、GitHub 用户名、Client ID 和 Secret；公网地址通过检查后，MCP 地址会复制到剪贴板。在 ChatGPT 添加连接并完成 GitHub 授权，再回到首页复制验证提示词执行 `verify_connection`。**本机安装成功不等于网页已连接。** 自托管背景见 [README](../README.md#连接-chatgpt-网页)。
+
+首页可直接启停本机服务、选择开机启动、检查连接和导出脱敏诊断包。需要升级时点击“检查并安装附带版本”；界面显示版本与备份结果。升级失败会尝试自动恢复；成功后如配置和修改记录没有变化，可以点击“回退上一备份”。
 
 如果此前用旧版服务连接过 ChatGPT，在首页点击“迁移旧网页连接”，选择旧服务的 JSON 配置文件，输入**原** GitHub OAuth App 的 Client ID 和 Client Secret，核对公网地址后确认。扩展会校验旧加密记录、升级本机运行包、保留当前项目授权与本机令牌，并验证 HTTPS OAuth 发现地址。失败时会尝试恢复迁移前的本机配置；旧配置和旧记录不会被删除。凭据保存在 VS Code SecretStorage，重新打开 VS Code 时可用于恢复服务。最后仍须在 ChatGPT 发起一次真实工具调用；如网页要求重新授权，按网页提示完成。
 

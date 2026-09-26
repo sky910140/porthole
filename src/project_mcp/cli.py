@@ -22,6 +22,16 @@ from .config import Settings, default_config_path, load_config, save_config
 from .upgrade import UpgradeError
 
 
+def _upgrade_blocks_start(state_dir: Path) -> bool:
+    marker = state_dir / "upgrade-in-progress.json"
+    if not marker.exists():
+        return False
+    try:
+        return json.loads(marker.read_text(encoding="utf-8")).get("phase") != "awaiting_verification"
+    except (OSError, ValueError):
+        return True
+
+
 def status(settings, path):
     try:
         response = httpx.get(f"http://127.0.0.1:{settings.admin_port}/api/status",
@@ -47,7 +57,7 @@ async def serve(settings, path):
     import uvicorn
 
     from .server import Runtime, create_admin_app, create_mcp
-    if ((settings.state_dir or path.parent / ".local") / "upgrade-in-progress.json").exists():
+    if _upgrade_blocks_start(settings.state_dir or path.parent / ".local"):
         raise ValueError("Upgrade in progress; complete or restore the snapshot before starting")
     runtime = Runtime(settings, path)
     hosts = [f"localhost:{settings.mcp_port}", f"127.0.0.1:{settings.mcp_port}"]
@@ -84,7 +94,7 @@ async def serve(settings, path):
 
 
 def start(settings, path):
-    if ((settings.state_dir or path.parent / ".local") / "upgrade-in-progress.json").exists():
+    if _upgrade_blocks_start(settings.state_dir or path.parent / ".local"):
         raise ValueError("Upgrade in progress; complete or restore the snapshot before starting")
     if status(settings, path):
         print("Already running")
@@ -178,6 +188,12 @@ def _upgrade_command(args, path: Path) -> None:
     elif args.command == "upgrade-restore":
         manager.restore_snapshot(args.snapshot_id)
         print("Snapshot restored; project files were not changed")
+    elif args.command == "upgrade-rollback":
+        manager.rollback_verified_snapshot(args.snapshot_id)
+        print("Verified snapshot restored; project files were not changed")
+    elif args.command == "upgrade-finalize":
+        manager.finalize_upgrade(args.snapshot_id, health_check=lambda: bool(status(load_config(path), path)))
+        print("Upgrade verified and finalized")
     else:
         manager.complete_upgrade(args.snapshot_id, health_check=lambda: (
             (manager.runtime_dir / "ai-zhagan.exe").is_file()
@@ -191,7 +207,9 @@ def main(argv=None):
     parser.add_argument("command", choices=[
         "init", "serve", "start", "stop", "status", "doctor", "token", "pair",
         "diagnostics-preview", "diagnostics-export",
-        "upgrade-prepare", "upgrade-restore", "upgrade-complete",
+        "upgrade-prepare", "upgrade-restore", "upgrade-complete", "upgrade-finalize",
+        "upgrade-rollback",
+        "credential-store", "credential-clear",
     ])
     parser.add_argument("--config", type=Path)
     parser.add_argument("--project", type=Path, default=Path.cwd())
@@ -219,7 +237,24 @@ def main(argv=None):
             _upgrade_command(args, path)
             return 0
         settings = load_config(path)
-        if args.command == "serve":
+        if args.command == "credential-store":
+            from .auth import store_github_credentials
+
+            payload = sys.stdin.read(16_385)
+            if len(payload) > 16_384:
+                raise ValueError("credential input too large")
+            credentials = json.loads(payload)
+            if not isinstance(credentials, dict):
+                raise ValueError("credential input must be an object")
+            store_github_credentials(settings.state_dir,
+                                     credentials.get("client_id"), credentials.get("client_secret"))
+            print("Credentials stored in the operating system vault")
+        elif args.command == "credential-clear":
+            from .auth import clear_github_credentials
+
+            clear_github_credentials(settings.state_dir)
+            print("Credentials removed from the operating system vault")
+        elif args.command == "serve":
             asyncio.run(serve(settings, path))
         elif args.command == "start":
             start(settings, path)
