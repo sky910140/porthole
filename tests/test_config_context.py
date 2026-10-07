@@ -20,12 +20,17 @@ def test_public_mode_fails_closed_without_oauth(tmp_path):
         Settings(projects=[], public_url="https://mcp.example.com", auth_mode="local")
 
 
-def test_context_versions_isolation_and_expiry(tmp_path):
+def test_context_versions_isolation_and_expiry(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from project_mcp import context
     from project_mcp.context import ContextStore
     from project_mcp.policy import ProjectPolicy
     from project_mcp.workspace import Workspace
     (tmp_path / "main.py").write_text("saved", encoding="utf8")
-    store = ContextStore(ttl=0.05)
+    now = [100.0]
+    monkeypatch.setattr(context, "time", SimpleNamespace(monotonic=lambda: now[0], time=lambda: 1000.0))
+    store = ContextStore(ttl=60)
     workspace = Workspace(
         tmp_path, "demo", policy=ProjectPolicy(share_editor_buffers=True)
     )
@@ -38,8 +43,9 @@ def test_context_versions_isolation_and_expiry(tmp_path):
     with pytest.raises(ValueError):
         store.put(workspace, {**payload, "version": 1})
     assert (tmp_path / "main.py").read_text() == "saved"
-    import time
-    time.sleep(0.06)
+    now[0] = 159.0
+    assert store.get("demo", "editor-one")["text"] == "unsaved"
+    now[0] = 160.0
     with pytest.raises(ValueError):
         store.get("demo", "editor-one")
 
