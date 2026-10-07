@@ -1,15 +1,15 @@
 # 兼容性与验收状态
 
-更新：2026-10-07，舷窗 Porthole 0.9.1 预发布版。下表记录本次本机实际结果；远端结果以 [GitHub Actions](https://github.com/sky910140/porthole/actions) 为准。配置了流水线不等于已经通过。
+更新：2026-10-07，舷窗 Porthole 0.9.1 预发布版。Windows 上 Python 3.11/3.12 与 VS Code 1.137.0/1.138.0 的四组组合已在 [本轮 GitHub Actions](https://github.com/sky910140/porthole/actions/runs/37621855069) 通过。下表区分本机、远端及尚未验收的场景。
 
 | 组件或场景 | 验证组合 | 当前结果与限制 |
 |---|---|---|
-| 核心源码 | Windows、Python 3.12 | 221 passed、2 skipped、3 warnings；覆盖率 84.99%，Ruff 与 14 个文件的架构边界检查通过 |
-| 核心源码 | Windows、Python 3.11 | 已配置 CI；本机未验证 |
-| 扩展逻辑 | Node.js 24 | 115 passed、0 failed；打包工具要求 Node.js 22+ |
+| 核心源码 | Windows、Python 3.12 | 本机 221 passed、2 skipped、3 warnings；远端两组均为 223 passed、3 warnings；覆盖率 84.99%，Ruff 与 14 个文件的架构边界检查通过 |
+| 核心源码 | Windows、Python 3.11 | 远端两组均为 223 passed、3 warnings、覆盖率 84.43%；本机未验证 |
+| 扩展逻辑 | Node.js 24（本机）、22（远端） | 115 passed、0 failed；打包工具要求 Node.js 22+ |
 | 完整 VSIX | Windows x64、受限 PATH | 最终提取包隔离安装、配对、服务启停、文本/CSV/XLSX 读取、文件预览和冻结程序重置通过；不依赖目标 PATH 中的 Python 或 Node |
-| VS Code Extension Host | VS Code 1.138.0 x64 | 最终 VSIX 提取包通过；覆盖项目隔离、首页状态、文件预览、重置与凭据清理 |
-| VS Code Extension Host | VS Code 1.137.0 x64 | 已配置 CI；本机本轮未验证 |
+| VS Code Extension Host | VS Code 1.138.0 x64 | 本机及远端通过，含最终 VSIX 提取包；覆盖项目隔离、首页状态、文件预览、重置与凭据清理 |
+| VS Code Extension Host | VS Code 1.137.0 x64 | 远端 Python 3.11/3.12 两组通过；本机本轮未验证 |
 | 浏览器与 Webview | Playwright Chromium | 管理页、修改建议到审阅应用、单页连接向导、初始状态恢复、文件范围预览五组通过 |
 | 官方隧道客户端 | Windows x64、v0.0.15 | VSIX 内离线安装、SHA-256 校验、实际客户端与本机 MCP 联调、401/403/404 分类及断网重连通过；控制面使用本机夹具 |
 | VS Code 凭据 | 原生 SecretStorage | 独立测试观察到快速设置更新期间的短暂旧值；跨进程持久化与此场景的稳定性待验收。Extension Host 自动测试使用内存凭据，不能代替原生持久化验收 |
