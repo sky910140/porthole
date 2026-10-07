@@ -99,7 +99,7 @@ test('preflight refuses to overwrite OAuth state already held by the new service
 test('managed status rejects another config on the same port', async () => {
   const f = fixture();
   try {
-    const expected = crypto.createHash('sha256').update(path.resolve(f.newConfig)).digest('hex');
+    const expected = crypto.createHash('sha256').update(fs.realpathSync.native(f.newConfig)).digest('hex');
     const fetcher = async (_url, options) => {
       assert.equal(options.headers.Authorization, 'Bearer new-token');
       return { ok: true, json: async () => ({ config_id: 'another', protocol_version: '1.0.0',
