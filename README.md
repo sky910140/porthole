@@ -12,6 +12,8 @@
 
 使用安装包不需要安装 Python、Node.js，也不需要运行 PowerShell。
 
+**安装过早期内部版的用户：**先按[旧版升级步骤](docs/beginner-manual.md#从旧内部版本升级)卸载旧扩展并重新加载 VS Code，再打开舷窗首页。新扩展使用独立标识，安装 0.9.1 不会自动替换旧扩展。
+
 1. 从 [v0.9.1 下载页](https://github.com/sky910140/porthole/releases/tag/v0.9.1) 下载 **`porthole-0.9.1.vsix`**。
 2. 打开 VS Code，在扩展面板选择 **… → 从 VSIX 安装**，安装后按提示重新加载。
 3. 按 `Ctrl+Shift+P`，运行 **舷窗: 打开首页**，点击 **安装本机服务**。

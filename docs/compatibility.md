@@ -10,6 +10,7 @@
 | 完整 VSIX | Windows x64、受限 PATH | 最终提取包隔离安装、配对、服务启停、文本/CSV/XLSX 读取、文件预览和冻结程序重置通过；不依赖目标 PATH 中的 Python 或 Node |
 | VS Code Extension Host | VS Code 1.138.0 x64 | 本机及远端通过，含最终 VSIX 提取包；覆盖项目隔离、首页状态、文件预览、重置与凭据清理 |
 | VS Code Extension Host | VS Code 1.137.0 x64 | 远端 Python 3.11/3.12 两组通过；本机本轮未验证 |
+| 已安装扩展复核 | VS Code 1.140.0 x64、Porthole 0.9.1 | 本机隔离 Extension Host 通过；已安装扩展清单及 308 个文件与发布 VSIX 一致。使用临时配置和内存凭据，不代替原生凭据及真实账号验收 |
 | 浏览器与 Webview | Playwright Chromium | 管理页、修改建议到审阅应用、单页连接向导、初始状态恢复、文件范围预览五组通过 |
 | 官方隧道客户端 | Windows x64、v0.0.15 | VSIX 内离线安装、SHA-256 校验、实际客户端与本机 MCP 联调、401/403/404 分类及断网重连通过；控制面使用本机夹具 |
 | VS Code 凭据 | 原生 SecretStorage | 独立测试观察到快速设置更新期间的短暂旧值；跨进程持久化与此场景的稳定性待验收。Extension Host 自动测试使用内存凭据，不能代替原生持久化验收 |

@@ -12,6 +12,8 @@ Porthole is a local, open-source MCP tool. Select a folder and let an MCP-capabl
 
 Using the bundled Windows VSIX does not require Python, Node.js, or terminal commands.
 
+**Upgrading from an early internal build:** stop its service, uninstall the old extension, and reload VS Code before opening Porthole. The extension identifier changed, so installing 0.9.1 leaves the old extension installed. Follow the [upgrade steps (Chinese)](docs/beginner-manual.md#从旧内部版本升级); old grants and credentials are not migrated automatically.
+
 1. Download `porthole-0.9.1.vsix` from the [release page](https://github.com/sky910140/porthole/releases/tag/v0.9.1).
 2. In VS Code, choose **Extensions → … → Install from VSIX**, then reload when prompted.
 3. Run **舷窗: 打开首页** from the Command Palette and install the local service.
