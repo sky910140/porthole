@@ -2,7 +2,7 @@
   "name": "porthole",
   "displayName": "舷窗 Porthole",
   "description": "让 AI 读取明确授权的本机文件夹，并在 VS Code 审阅修改建议。",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "sky910140",
   "license": "MIT",
   "engines": {

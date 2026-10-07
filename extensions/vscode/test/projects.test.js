@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { projectIdForPath, projectForRoot, projectChoice, projectPolicyChange } = require('../lib/projects');
@@ -24,6 +26,25 @@ test('selecting an already authorized directory uses its actual project ID', () 
   assert.deepEqual(projectChoice(root, [project]), {
     id: 'custom-id', root, existing: true, mode: 'read_only',
   });
+});
+
+test('directory aliases reuse the existing grant and generate the same project ID', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-project-path-'));
+  const projectRoot = path.join(root, 'project');
+  const alias = path.join(root, 'alias');
+  fs.mkdirSync(projectRoot);
+  fs.symlinkSync(projectRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    const project = { id: 'original', root: projectRoot, mode: 'read_only' };
+    assert.equal(projectIdForPath(alias), projectIdForPath(projectRoot));
+    assert.equal(projectForRoot([project], alias), project);
+    assert.deepEqual(projectChoice(alias, [project]), {
+      id: 'original', root: fs.realpathSync.native(projectRoot), existing: true, mode: 'read_only',
+    });
+  } finally {
+    fs.unlinkSync(alias);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('allowing proposals does not grant local writes and returning to read-only revokes writes', () => {

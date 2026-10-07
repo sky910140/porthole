@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "porthole-workspace"
-version = "0.9.0"
+version = "0.9.1"
 description = "Porthole connects MCP assistants to explicitly authorized local folders"
 readme = "README.md"
 license = "MIT"

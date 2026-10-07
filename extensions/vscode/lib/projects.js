@@ -2,10 +2,11 @@
 
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { canonicalPath } = require('./local-path');
 
 function normalizedRoot(root) {
   if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('请选择本机绝对目录。');
-  const resolved = path.resolve(root).replace(/[\\/]+$/, '');
+  const resolved = canonicalPath(root).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
@@ -21,7 +22,7 @@ function projectForRoot(projects, root) {
 }
 
 function projectChoice(root, projects) {
-  const canonical = path.resolve(root);
+  const canonical = canonicalPath(root);
   const existing = projectForRoot(projects, canonical);
   return existing
     ? { id: existing.id, root: canonical, existing: true, mode: existing.mode }

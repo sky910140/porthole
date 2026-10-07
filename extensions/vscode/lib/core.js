@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { canonicalPath } = require('./local-path');
 const { validateServiceInfo } = require('./protocol');
 
 const MAX_TEXT_BYTES = 1024 * 1024;
@@ -35,7 +36,7 @@ function normalizeServiceUrl(value, options = {}) {
 }
 
 function relativeWorkspacePath(rootPath, filePath) {
-  const relativePath = path.relative(path.resolve(rootPath), path.resolve(filePath));
+  const relativePath = path.relative(canonicalPath(rootPath), canonicalPath(filePath));
   if (!relativePath || relativePath === '.' || relativePath.startsWith(`..${path.sep}`) || relativePath === '..' || path.isAbsolute(relativePath)) {
     throw new Error('当前编辑器不是绑定的工作区内的普通文件。');
   }
@@ -44,7 +45,7 @@ function relativeWorkspacePath(rootPath, filePath) {
 
 function comparableRoot(rootPath) {
   if (typeof rootPath !== 'string' || !path.isAbsolute(rootPath)) return null;
-  const normalized = path.resolve(rootPath).replace(/[\\/]+$/, '');
+  const normalized = canonicalPath(rootPath).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 

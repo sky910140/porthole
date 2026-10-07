@@ -1,12 +1,12 @@
 # 兼容性与验收状态
 
-更新：2026-10-07，舷窗 Porthole 0.9.0 预发布版。下表记录本次本机实际结果；远端结果以 [GitHub Actions](https://github.com/sky910140/porthole/actions) 为准。配置了流水线不等于已经通过。
+更新：2026-10-07，舷窗 Porthole 0.9.1 预发布版。下表记录本次本机实际结果；远端结果以 [GitHub Actions](https://github.com/sky910140/porthole/actions) 为准。配置了流水线不等于已经通过。
 
 | 组件或场景 | 验证组合 | 当前结果与限制 |
 |---|---|---|
 | 核心源码 | Windows、Python 3.12 | 221 passed、2 skipped、3 warnings；覆盖率 84.99%，Ruff 与 14 个文件的架构边界检查通过 |
 | 核心源码 | Windows、Python 3.11 | 已配置 CI；本机未验证 |
-| 扩展逻辑 | Node.js 24 | 112 passed、0 failed；打包工具要求 Node.js 22+ |
+| 扩展逻辑 | Node.js 24 | 115 passed、0 failed；打包工具要求 Node.js 22+ |
 | 完整 VSIX | Windows x64、受限 PATH | 最终提取包隔离安装、配对、服务启停、文本/CSV/XLSX 读取、文件预览和冻结程序重置通过；不依赖目标 PATH 中的 Python 或 Node |
 | VS Code Extension Host | VS Code 1.138.0 x64 | 最终 VSIX 提取包通过；覆盖项目隔离、首页状态、文件预览、重置与凭据清理 |
 | VS Code Extension Host | VS Code 1.137.0 x64 | 已配置 CI；本机本轮未验证 |
@@ -24,4 +24,4 @@
 
 0.9.0 改用了 `porthole` 命令、`sky910140.porthole` 扩展身份与 `%LOCALAPPDATA%\Porthole` 数据目录。早期内部版本没有自动迁移到新命名空间；不要把旧版本的运行结果或授权状态当作本版本结果。
 
-本次命令、构件和发布范围见 [0.9.0 预发布核验](acceptance/github-prerelease-0.9.0.md)。历史记录见 [0.8.2](acceptance/scope-preview-hotfix-0.8.2.md)、[0.8.1](acceptance/reset-home-hotfix-0.8.1.md)、[0.8.0](acceptance/initial-reset-0.8.0.md)；保留原名称和原构件信息，以免改写历史证据。
+本次命令、构件和发布范围见 [0.9.1 预发布核验](acceptance/github-prerelease-0.9.1.md)。历史记录见 [0.8.2](acceptance/scope-preview-hotfix-0.8.2.md)、[0.8.1](acceptance/reset-home-hotfix-0.8.1.md)、[0.8.0](acceptance/initial-reset-0.8.0.md)；保留原名称和原构件信息，以免改写历史证据。

@@ -1,6 +1,6 @@
 # 舷窗文档索引
 
-当前使用说明对应 **0.9.0 预发布版**。旧版本验收记录是历史证据，不代表当前版本或全部平台已经通过验证。
+当前使用说明对应 **0.9.1 预发布版**。旧版本验收记录是历史证据，不代表当前版本或全部平台已经通过验证。
 
 ## 使用者
 
@@ -32,7 +32,7 @@
 
 ## 验收记录
 
-- [0.9.0 GitHub 预发布核验](acceptance/github-prerelease-0.9.0.md)：本次上传的检查和发布范围。
+- [0.9.1 GitHub 预发布核验](acceptance/github-prerelease-0.9.1.md)：本次上传的检查和发布范围。
 - [0.8.2 文件预览修复](acceptance/scope-preview-hotfix-0.8.2.md)。
 - [0.8.1 首页状态修复](acceptance/reset-home-hotfix-0.8.1.md)。
 - [0.8.0 初始状态恢复](acceptance/initial-reset-0.8.0.md)。

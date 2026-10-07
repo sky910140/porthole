@@ -4,9 +4,9 @@
 
 ## 安装
 
-从 [GitHub 下载页](https://github.com/sky910140/porthole/releases/tag/v0.9.0) 下载完整 VSIX，详细步骤见 [初学者手册](https://github.com/sky910140/porthole/blob/main/docs/beginner-manual.md)。
+从 [GitHub 下载页](https://github.com/sky910140/porthole/releases/tag/v0.9.1) 下载完整 VSIX，详细步骤见 [初学者手册](https://github.com/sky910140/porthole/blob/main/docs/beginner-manual.md)。
 
-在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `porthole-0.9.0.vsix`。候选 VSIX 已内置 Windows x64 运行包。
+在 VS Code 中打开“扩展”视图，选择右上角 `…` → “从 VSIX 安装”，选取本目录生成的 `porthole-0.9.1.vsix`。候选 VSIX 已内置 Windows x64 运行包。
 
 ## 使用
 

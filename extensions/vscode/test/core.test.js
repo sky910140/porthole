@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -71,6 +73,30 @@ test('requires the selected project root to equal the bound workspace root', () 
   assert.throws(() => validateProjectBinding(status, 'missing', workspaceRoot), /不存在项目/);
   assert.throws(() => validateProjectBinding(status, 'p1', path.resolve('other')), /根目录不匹配/);
   assert.throws(() => validateProjectBinding({ projects: [{ id: 'p1' }] }, 'p1', workspaceRoot), /缺少 root/);
+});
+
+test('directory aliases preserve project binding and relative file boundaries', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-path-'));
+  const project = path.join(root, 'project');
+  const alias = path.join(root, 'alias');
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(project);
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(project, 'inside.txt'), 'inside');
+  fs.writeFileSync(path.join(outside, 'outside.txt'), 'outside');
+  fs.symlinkSync(project, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  fs.symlinkSync(outside, path.join(project, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    assert.equal(validateProjectBinding({ projects: [{ id: 'p', root: project }] }, 'p', alias).id, 'p');
+    assert.equal(relativeWorkspacePath(project, path.join(alias, 'inside.txt')), 'inside.txt');
+    assert.equal(relativeWorkspacePath(project, path.join(alias, 'new.txt')), 'new.txt');
+    assert.throws(() => validateProjectBinding({ projects: [{ id: 'p', root: project }] }, 'p', outside), /根目录不匹配/);
+    assert.throws(() => relativeWorkspacePath(project, path.join(alias, 'escape', 'outside.txt')), /绑定的工作区/);
+  } finally {
+    fs.unlinkSync(path.join(project, 'escape'));
+    fs.unlinkSync(alias);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('requires explicit project permission before sharing editor buffers', () => {

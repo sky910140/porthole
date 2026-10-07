@@ -4,15 +4,15 @@
 
 舷窗是一个在本机运行的开源 MCP 工具。你选择要共享的文件夹，再让 ChatGPT 等支持 MCP 的客户端读取代码、资料和表格。需要修改文件时，AI 先提出建议，你在 VS Code 查看差异并明确应用。
 
-[English](README.en.md) · [下载安装包](https://github.com/sky910140/porthole/releases/tag/v0.9.0) · [初学者操作手册](docs/beginner-manual.md) · [常见问题](docs/troubleshooting.md)
+[English](README.en.md) · [下载安装包](https://github.com/sky910140/porthole/releases/tag/v0.9.1) · [初学者操作手册](docs/beginner-manual.md) · [常见问题](docs/troubleshooting.md)
 
-当前版本为 **0.9.0 预发布版**，采用 MIT 许可证，主要支持 **Windows x64 + VS Code**。干净 Windows 虚拟机安装、24 小时稳定性和真实 ChatGPT 私有隧道完整验收仍待完成；详见 [兼容性与验收范围](docs/compatibility.md)。安装包未上架扩展市场，也未进行代码签名。
+当前版本为 **0.9.1 预发布版**，采用 MIT 许可证，主要支持 **Windows x64 + VS Code**。干净 Windows 虚拟机安装、24 小时稳定性和真实 ChatGPT 私有隧道完整验收仍待完成；详见 [兼容性与验收范围](docs/compatibility.md)。安装包未上架扩展市场，也未进行代码签名。
 
 ## 新手从这里开始
 
 使用安装包不需要安装 Python、Node.js，也不需要运行 PowerShell。
 
-1. 从 [v0.9.0 下载页](https://github.com/sky910140/porthole/releases/tag/v0.9.0) 下载 **`porthole-0.9.0.vsix`**。
+1. 从 [v0.9.1 下载页](https://github.com/sky910140/porthole/releases/tag/v0.9.1) 下载 **`porthole-0.9.1.vsix`**。
 2. 打开 VS Code，在扩展面板选择 **… → 从 VSIX 安装**，安装后按提示重新加载。
 3. 按 `Ctrl+Shift+P`，运行 **舷窗: 打开首页**，点击 **安装本机服务**。
 4. 点击 **选择文件夹**，核对目录并授权，再点击 **预览可访问文件**。

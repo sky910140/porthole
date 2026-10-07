@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { canonicalPath } = require('./local-path');
 const { profileGenerationGuard } = require('./profile-edit');
 
 function readJson(file) {
@@ -184,7 +185,8 @@ async function managedStatus(configFile, fetcher = fetch) {
     });
     if (!response.ok) return null;
     const status = await response.json();
-    const expected = crypto.createHash('sha256').update(path.resolve(configFile)).digest('hex');
+    // Match Python Path.resolve(), including Windows short names and directory aliases.
+    const expected = crypto.createHash('sha256').update(canonicalPath(configFile)).digest('hex');
     return status.config_id === expected && /^1\./.test(status.protocol_version || '')
       && status.mcp_port === config.mcp_port && status.auth_mode === config.auth_mode
       && (status.public_url || null) === (config.public_url || null) ? status : null;

@@ -114,6 +114,27 @@ test('managed status rejects another config on the same port', async () => {
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test('managed status resolves directory aliases before checking the service identity', async () => {
+  const f = fixture();
+  const directory = path.join(f.root, 'profile-directory');
+  const alias = path.join(f.root, 'profile-alias');
+  fs.mkdirSync(directory);
+  const configFile = path.join(directory, 'config.json');
+  fs.renameSync(f.newConfig, configFile);
+  fs.symlinkSync(directory, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    const expected = crypto.createHash('sha256').update(fs.realpathSync.native(configFile)).digest('hex');
+    const status = await managedStatus(path.join(alias, 'config.json'), async () => ({ ok: true,
+      json: async () => ({ config_id: expected, protocol_version: '1.0.0',
+        mcp_port: 8765, auth_mode: 'local', public_url: null }) }));
+    assert.ok(status, 'the extension must identify the same canonical config path as the backend');
+    assert.equal(status.config_id, expected);
+  } finally {
+    fs.unlinkSync(alias);
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('migration rollback cannot restore grants after another window resets', async () => {
   const f = fixture();
   try {

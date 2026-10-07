@@ -4,15 +4,15 @@
 
 Porthole is a local, open-source MCP tool. Select a folder and let an MCP-capable assistant read code, documents, and tables. Changes are proposed first, then reviewed and explicitly applied in VS Code.
 
-[中文](README.md) · [Download v0.9.0](https://github.com/sky910140/porthole/releases/tag/v0.9.0) · [Beginner manual (Chinese)](docs/beginner-manual.md) · [Documentation](docs/README.md)
+[中文](README.md) · [Download v0.9.1](https://github.com/sky910140/porthole/releases/tag/v0.9.1) · [Beginner manual (Chinese)](docs/beginner-manual.md) · [Documentation](docs/README.md)
 
-**Status: 0.9.0 prerelease, MIT licensed.** The primary target is Windows x64 with VS Code. Clean Windows VM installation, 24-hour stability, and a complete live ChatGPT private-tunnel round trip remain open acceptance items. See the [compatibility matrix](docs/compatibility.md). The extension is not listed on the marketplace and the binaries are unsigned.
+**Status: 0.9.1 prerelease, MIT licensed.** The primary target is Windows x64 with VS Code. Clean Windows VM installation, 24-hour stability, and a complete live ChatGPT private-tunnel round trip remain open acceptance items. See the [compatibility matrix](docs/compatibility.md). The extension is not listed on the marketplace and the binaries are unsigned.
 
 ## Install and connect
 
 Using the bundled Windows VSIX does not require Python, Node.js, or terminal commands.
 
-1. Download `porthole-0.9.0.vsix` from the [release page](https://github.com/sky910140/porthole/releases/tag/v0.9.0).
+1. Download `porthole-0.9.1.vsix` from the [release page](https://github.com/sky910140/porthole/releases/tag/v0.9.1).
 2. In VS Code, choose **Extensions → … → Install from VSIX**, then reload when prompted.
 3. Run **舷窗: 打开首页** from the Command Palette and install the local service.
 4. Select a folder, confirm authorization, and preview the accessible files.

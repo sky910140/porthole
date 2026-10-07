@@ -1,6 +1,6 @@
 # 构建、预发布与升级
 
-当前版本：**0.9.0 预发布版**。公开源码不等于正式稳定版：干净 Windows 虚拟机、真实网页账号完整闭环和 24 小时运行仍待验收。当前发行物未签名，未上架 VS Code 市场或公开 ChatGPT 插件目录。
+当前版本：**0.9.1 预发布版**。公开源码不等于正式稳定版：干净 Windows 虚拟机、真实网页账号完整闭环和 24 小时运行仍待验收。当前发行物未签名，未上架 VS Code 市场或公开 ChatGPT 插件目录。
 
 ## 构建前验证
 
@@ -23,15 +23,15 @@ node tests/e2e/scope-preview.cjs
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-extension.ps1
-.\.venv\Scripts\python.exe scripts\verify-vsix.py extensions\vscode\porthole-0.9.0.vsix
-.\.venv\Scripts\python.exe scripts\candidate_manifest.py dist\porthole_workspace-0.9.0-py3-none-any.whl extensions\vscode\porthole-0.9.0.vsix artifacts\runtime\porthole-windows-x64.zip
+.\.venv\Scripts\python.exe scripts\verify-vsix.py extensions\vscode\porthole-0.9.1.vsix
+.\.venv\Scripts\python.exe scripts\candidate_manifest.py dist\porthole_workspace-0.9.1-py3-none-any.whl extensions\vscode\porthole-0.9.1.vsix artifacts\runtime\porthole-windows-x64.zip
 ```
 
 | 产物 | 用途 |
 |---|---|
-| `extensions/vscode/porthole-0.9.0.vsix` | 新手安装；含本机运行包和官方隧道客户端 |
+| `extensions/vscode/porthole-0.9.1.vsix` | 新手安装；含本机运行包和官方隧道客户端 |
 | `artifacts/runtime/porthole-windows-x64.zip` | 开发者手动运行的独立 Windows 程序 |
-| `dist/porthole_workspace-0.9.0-py3-none-any.whl` | 已有 Python 环境的开发者安装 |
+| `dist/porthole_workspace-0.9.1-py3-none-any.whl` | 已有 Python 环境的开发者安装 |
 | `dist/candidate-manifest.json` | 版本、大小、SHA-256 与验收目标 |
 
 普通用户只下载 VSIX。仅执行 `package:vsix` 不会构建核心服务；完整发行物必须使用仓库根目录的 `scripts/package-extension.ps1`。
@@ -43,14 +43,14 @@ VSIX 附带固定版本 OpenAI `tunnel-client` v0.0.15 官方原始 ZIP，构建
 ## 检查发布内容
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\check_release_contents.py dist\porthole_workspace-0.9.0-py3-none-any.whl
-.\.venv\Scripts\python.exe scripts\check_release_contents.py extensions\vscode\porthole-0.9.0.vsix
+.\.venv\Scripts\python.exe scripts\check_release_contents.py dist\porthole_workspace-0.9.1-py3-none-any.whl
+.\.venv\Scripts\python.exe scripts\check_release_contents.py extensions\vscode\porthole-0.9.1.vsix
 .\.venv\Scripts\python.exe scripts\check_release_contents.py artifacts\runtime\porthole-windows-x64.zip
 ```
 
 这些检查拒绝状态目录、令牌、日志和 `.env` 文件；仍需检查待提交源码和 Git 历史中是否含真实凭据。构建产物不提交到源码仓库，而是作为 GitHub Release 附件提供。
 
-首版发布使用 `v0.9.0` 标签并标记 **Pre-release**。附带 VSIX、运行 ZIP、wheel、`SHA256SUMS.txt`、构件清单与依赖清单。校验和证明下载文件与上传构件一致，不能代替代码签名。
+首版发布使用 `v0.9.1` 标签并标记 **Pre-release**。附带 VSIX、运行 ZIP、wheel、`SHA256SUMS.txt`、构件清单与依赖清单。校验和证明下载文件与上传构件一致，不能代替代码签名。
 
 ## GitHub Actions
 
@@ -64,6 +64,6 @@ VS Code 首页提供“检查并安装附带版本”和“回退上一备份”
 
 运行包目录必须是配置文件同级的 `runtime/current`。管理命令仅供本机，不通过 MCP 暴露。快照按敏感数据保存；升级进行中会阻止服务启动，直至验证完成或恢复。
 
-当前版本的默认数据目录为 `%LOCALAPPDATA%\Porthole`，CLI 为 `porthole`。0.9.0 统一了扩展身份、配置和凭据命名空间，没有加入早期内部版本的自动迁移功能。
+当前版本的默认数据目录为 `%LOCALAPPDATA%\Porthole`，CLI 为 `porthole`。0.9.1 统一了扩展身份、配置和凭据命名空间，没有加入早期内部版本的自动迁移功能。
 
 恢复初始状态与升级互斥，旧恢复代次的快照不能恢复已撤销授权。重置保留用户文件、修改历史与恢复备份，详见 [恢复说明](../extensions/vscode/RESET.md)。卸载或清理不能删除用户项目。
