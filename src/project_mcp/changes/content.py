@@ -12,7 +12,7 @@ from typing import Protocol
 from cryptography.fernet import Fernet, InvalidToken
 
 _BLOB_ID = re.compile(r"^[0-9a-f]{64}$")
-_MARKER_PLAINTEXT = b"ai-zhagan-protected-content-v1"
+_MARKER_PLAINTEXT = b"porthole-protected-content-v1"
 
 
 class StorageUnavailable(RuntimeError):
@@ -30,7 +30,7 @@ class KeyProvider(Protocol):
 class KeyringKeyProvider:
     """Keep the content key in the operating-system credential backend."""
 
-    def __init__(self, identity: str, *, service: str = "AI Zhagan protected content") -> None:
+    def __init__(self, identity: str, *, service: str = "Porthole protected content") -> None:
         self.identity = identity
         self.service = service
 

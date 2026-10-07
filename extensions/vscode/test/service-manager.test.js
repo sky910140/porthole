@@ -17,7 +17,7 @@ const {
   validateManifest,
 } = require('../lib/service-manager');
 
-function writeBundle(root, { version = '0.2.0', files = { 'ai-zhagan.exe': 'new runtime', '_internal/library.dll': 'library' } } = {}) {
+function writeBundle(root, { version = '0.2.0', files = { 'porthole.exe': 'new runtime', '_internal/library.dll': 'library' } } = {}) {
   const payload = path.join(root, 'payload');
   fs.mkdirSync(payload, { recursive: true });
   const entries = Object.entries(files).map(([name, content]) => {
@@ -36,11 +36,11 @@ function writeBundle(root, { version = '0.2.0', files = { 'ai-zhagan.exe': 'new 
 }
 
 test('bundled runtime installs verified files and reuses a healthy install', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-bundle-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-bundle-'));
   const bundle = path.join(root, 'bundle');
   const current = path.join(root, 'current');
   writeBundle(bundle);
-  assert.equal(installBundledRuntime(bundle, current, '0.2.0'), path.join(current, 'ai-zhagan.exe'));
+  assert.equal(installBundledRuntime(bundle, current, '0.2.0'), path.join(current, 'porthole.exe'));
   assert.equal(fs.readFileSync(path.join(current, '_internal/library.dll'), 'utf8'), 'library');
   fs.writeFileSync(path.join(current, 'keep.txt'), 'existing');
   installBundledRuntime(bundle, current, '0.2.0');
@@ -66,15 +66,15 @@ test('runtime installation retries a transient Windows rename failure', () => {
 });
 
 test('damaged bundle and invalid manifest cannot replace an existing runtime', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-bundle-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-bundle-'));
   const bundle = path.join(root, 'bundle');
   const current = path.join(root, 'current');
   writeBundle(bundle);
   fs.mkdirSync(current);
-  fs.writeFileSync(path.join(current, 'ai-zhagan.exe'), 'old runtime');
-  fs.writeFileSync(path.join(bundle, 'payload/ai-zhagan.exe'), 'tampered');
+  fs.writeFileSync(path.join(current, 'porthole.exe'), 'old runtime');
+  fs.writeFileSync(path.join(bundle, 'payload/porthole.exe'), 'tampered');
   assert.throws(() => installBundledRuntime(bundle, current, '0.2.0'), /校验失败/);
-  assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'old runtime');
+  assert.equal(fs.readFileSync(path.join(current, 'porthole.exe'), 'utf8'), 'old runtime');
   writeBundle(bundle);
   const manifestPath = path.join(bundle, 'bundle.json');
   const manifestValue = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -85,19 +85,19 @@ test('damaged bundle and invalid manifest cannot replace an existing runtime', (
   ]) {
     fs.writeFileSync(manifestPath, JSON.stringify(modified));
     assert.throws(() => installBundledRuntime(bundle, current, '0.2.0'));
-    assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'old runtime');
+    assert.equal(fs.readFileSync(path.join(current, 'porthole.exe'), 'utf8'), 'old runtime');
   }
   for (const suspiciousPath of ['CON', '_internal/odd?.dll']) {
     fs.writeFileSync(manifestPath, JSON.stringify({
       ...manifestValue, files: [{ ...manifestValue.files[0], path: suspiciousPath }],
     }));
     assert.throws(() => installBundledRuntime(bundle, current, '0.2.0'), /无效文件路径/);
-    assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'old runtime');
+    assert.equal(fs.readFileSync(path.join(current, 'porthole.exe'), 'utf8'), 'old runtime');
   }
   fs.writeFileSync(manifestPath, JSON.stringify(manifestValue));
   installBundledRuntime(bundle, current, '0.2.0');
-  assert.equal(fs.readFileSync(path.join(current, 'ai-zhagan.exe'), 'utf8'), 'new runtime');
-  assert.equal(fs.readFileSync(path.join(root, 'current.previous/ai-zhagan.exe'), 'utf8'), 'old runtime');
+  assert.equal(fs.readFileSync(path.join(current, 'porthole.exe'), 'utf8'), 'new runtime');
+  assert.equal(fs.readFileSync(path.join(root, 'current.previous/porthole.exe'), 'utf8'), 'old runtime');
 });
 
 function manifest(overrides = {}) {
@@ -106,7 +106,7 @@ function manifest(overrides = {}) {
     protocol_range: '>=1.0.0 <2.0.0',
     artifacts: {
       'win32-x64': {
-        url: 'https://downloads.example.test/ai-zhagan-0.2.0.zip',
+        url: 'https://downloads.example.test/porthole-0.2.0.zip',
         sha256: 'a'.repeat(64),
         size: 12,
       },
@@ -127,7 +127,7 @@ test('manifest requires matching version, architecture, protocol and trusted ori
 });
 
 test('corrupt artifact leaves the existing runtime untouched', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-install-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-install-'));
   const current = path.join(root, 'current');
   const download = path.join(root, 'download.zip');
   fs.mkdirSync(current); fs.writeFileSync(path.join(current, 'version.txt'), 'old');
@@ -137,7 +137,7 @@ test('corrupt artifact leaves the existing runtime untouched', () => {
 });
 
 test('verified artifact installs through staging and replaces only after success', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-install-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-install-'));
   const current = path.join(root, 'current');
   const download = path.join(root, 'download.zip');
   const bytes = Buffer.from('verified-runtime');
@@ -166,7 +166,7 @@ test('two windows share one managed launch and external services require opt-in'
 });
 
 test('offline first start fails clearly and keeps an existing installation', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-runtime-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-runtime-'));
   const current = path.join(root, 'current');
   fs.mkdirSync(current); fs.writeFileSync(path.join(current, 'version.txt'), 'old');
   const manager = new ServiceManager({

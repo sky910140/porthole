@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from functools import partial
+import threading
+from contextlib import contextmanager
+from functools import partial, wraps
 from pathlib import Path
 
 import anyio
@@ -26,6 +28,7 @@ from .editor_readiness import EditorReadiness
 from .health import HealthRegistry
 from .pairing import PairingStore
 from .policy import ProjectPolicy
+from .reset import LocalReset, ResetError, profile_edit_lock, require_no_pending_reset, reset_owner
 from .runtime_limits import BusyError, RuntimeLimits
 from .workspace import Workspace
 
@@ -40,14 +43,17 @@ class Runtime:
         editor_readiness: EditorReadiness | None = None,
     ):
         self.settings = settings
+        self._operation_gate = threading.RLock()
+        self._active_operations = 0
+        self.quiesced = False
         self.config_path = config_path
         self.contexts = ContextStore()
-        self.health = HealthRegistry()
-        self.limits = RuntimeLimits()
         state_dir = settings.state_dir or (
-            config_path.parent / ".local" if config_path else Path.home() / ".ai-zhagan"
+            config_path.parent / ".local" if config_path else Path.home() / ".porthole"
         )
         self.state_dir = Path(state_dir)
+        self.health = HealthRegistry(history_path=self.state_dir / "verification-history.json")
+        self.limits = RuntimeLimits()
         self.pairing = PairingStore(state_dir)
         self.stop_requested = asyncio.Event()
         self.config_id = hashlib.sha256(str(config_path.resolve() if config_path else "memory").encode()).hexdigest()
@@ -81,6 +87,66 @@ class Runtime:
             policy=policy,
         )
 
+    def require_open(self):
+        with self._operation_gate:
+            if self.quiesced:
+                raise ResetError("RESET_PENDING", "Local reset is prepared; resume reset before using the service")
+            if self.config_path is not None:
+                require_no_pending_reset(self.config_path)
+
+    @contextmanager
+    def operation(self):
+        with self._operation_gate:
+            self.require_open()
+            self._active_operations += 1
+        try:
+            yield
+        finally:
+            with self._operation_gate:
+                self._active_operations -= 1
+
+    def reset_operations_idle(self):
+        with self._operation_gate:
+            if self._active_operations or self.limits.read.active or self.limits.read.waiting:
+                return False
+            if self.config_path is None:
+                return False
+            try:
+                LocalReset(self.config_path).ensure_safe()
+            except ResetError:
+                return False
+            return True
+
+    def reset_ready(self, owner_nonce=None):
+        with self._operation_gate:
+            if self.config_path is None:
+                return False
+            if reset_owner(self.config_path, owner_nonce):
+                return self.reset_operations_idle()
+            if not self.reset_operations_idle():
+                return False
+            try:
+                with profile_edit_lock(self.config_path):
+                    return True
+            except ResetError:
+                return False
+
+    def prepare_reset(self, owner_nonce=None):
+        with self._operation_gate:
+            if self.config_path is None:
+                raise ResetError("RESET_BUSY", "Persistent configuration is required for reset")
+            if self.config_path is not None and reset_owner(self.config_path, owner_nonce):
+                return self._prepare_reset()
+            with profile_edit_lock(self.config_path):
+                return self._prepare_reset()
+
+    def _prepare_reset(self):
+        if not self.reset_operations_idle():
+            raise ResetError("RESET_BUSY", "Active local operations or unsafe changes block reset")
+        result = LocalReset(self.config_path).prepare()
+        self.quiesced = True
+        return result
+
     def _diagnostic_details(self) -> dict:
         from .protocol import service_info
 
@@ -94,11 +160,13 @@ class Runtime:
         }
 
     def workspace(self, project_id: str):
+        self.require_open()
         if project_id not in self.workspaces:
             raise ValueError("Unknown project_id; use list_projects")
         return self.workspaces[project_id]
 
     def projects(self):
+        self.require_open()
         return [{
             "id": p.id,
             "name": p.name or p.id,
@@ -108,6 +176,7 @@ class Runtime:
         } for p in self.settings.projects]
 
     def update_project(self, data: dict):
+        self.require_open()
         project = Project.model_validate(data)
         if project.id in self.workspaces:
             raise ValueError("Project ID already registered; remove it before changing its root")
@@ -120,11 +189,17 @@ class Runtime:
         self.workspaces[project.id] = workspace
 
     def update_project_policy(self, project_id: str, data: dict):
+        self.require_open()
         allowed = {
-            "mode", "paused", "apply_local_enabled", "share_editor_buffers", "exclude_paths"
+            "mode", "paused", "apply_local_enabled", "share_editor_buffers", "exclude_paths",
+            "name",
         }
         if set(data) - allowed:
             raise ValueError("Unknown project policy field")
+        if "name" in data:
+            if not isinstance(data["name"], str) or not data["name"].strip():
+                raise ValueError("Project name must not be empty")
+            data = {**data, "name": data["name"].strip()}
         self.workspace(project_id)
         current = next(project for project in self.settings.projects if project.id == project_id)
         updated = Project.model_validate({**current.model_dump(), **data})
@@ -144,10 +219,12 @@ class Runtime:
             save_config(self.config_path, new)
         self.settings = new
         self.workspaces.pop(project_id)
+        self.health.clear_project(project_id)
         for session in self.contexts.list(project_id):
             self.contexts.delete(session["session_id"])
 
     def get_change_service(self) -> ChangeService:
+        self.require_open()
         if self._change_service is not None:
             return self._change_service
         content = ProtectedContentStore(
@@ -162,6 +239,7 @@ class Runtime:
         return self._change_service
 
     def local_change_history(self, project_id: str | None = None) -> list[dict]:
+        self.require_open()
         if self._change_store is not None:
             return self._change_store.list_local(project_id=project_id)
         return read_local_history(
@@ -188,18 +266,45 @@ def create_mcp(runtime: Runtime) -> FastMCP:
         "openWorldHint": False,
     }
 
+    def guarded(function):
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            try:
+                with runtime.operation():
+                    return function(*args, **kwargs)
+            except ResetError as exc:
+                raise ToolError(str(exc)) from None
+        return wrapped
+
+    def guarded_async(function):
+        @wraps(function)
+        async def wrapped(*args, **kwargs):
+            try:
+                with runtime.operation():
+                    return await function(*args, **kwargs)
+            except ResetError as exc:
+                raise ToolError(str(exc)) from None
+        return wrapped
+
     async def invoke(project_id, name, **kwargs):
         try:
-            workspace = runtime.workspace(project_id)
-            async with runtime.limits.read.slot():
-                return await anyio.to_thread.run_sync(
-                    partial(getattr(workspace, name), **kwargs), limiter=limiter)
+            with runtime.operation():
+                workspace = runtime.workspace(project_id)
+                async with runtime.limits.read.slot():
+                    result = await anyio.to_thread.run_sync(
+                        partial(getattr(workspace, name), **kwargs), limiter=limiter)
+                    if runtime.settings.auth_mode == "github":
+                        runtime.health.record_tool_activity(project_id)
+                    return result
+        except ResetError as exc:
+            raise ToolError(str(exc)) from None
         except BusyError as exc:
             raise ToolError(str(exc)) from None
         except (ValueError, PermissionError, FileNotFoundError) as exc:
             raise ToolError(str(exc)) from None
 
     @mcp.tool(annotations=annotation)
+    @guarded
     def list_projects() -> list[dict]:
         """List registered project IDs; select one explicitly before reading."""
         return runtime.projects()
@@ -226,6 +331,13 @@ def create_mcp(runtime: Runtime) -> FastMCP:
         return await invoke(project_id, "read_file", path=path, start_line=start_line, end_line=end_line)
 
     @mcp.tool(annotations=annotation)
+    async def read_table(project_id: str, path: str, sheet: str | None = None,
+                         start_row: int = 1, limit: int = 50, max_columns: int = 20) -> dict:
+        """Use this when reading CSV or XLSX data; select a sheet and bounded row range."""
+        return await invoke(project_id, "read_table", path=path, sheet=sheet,
+                            start_row=start_row, limit=limit, max_columns=max_columns)
+
+    @mcp.tool(annotations=annotation)
     async def read_files(project_id: str, requests: list[dict]) -> dict:
         """Read up to ten saved text ranges with per-item errors and one total byte budget."""
         return await invoke(project_id, "read_files", requests=requests)
@@ -246,6 +358,7 @@ def create_mcp(runtime: Runtime) -> FastMCP:
         return await invoke(project_id, "git_diff", path=path, staged=staged)
 
     @mcp.tool(annotations=annotation)
+    @guarded
     def list_editor_sessions(project_id: str) -> list[dict]:
         """List live editor snapshot IDs. Never silently choose a different window."""
         workspace = runtime.workspace(project_id)
@@ -253,6 +366,7 @@ def create_mcp(runtime: Runtime) -> FastMCP:
                 if workspace.policy.allows_editor_buffer(item["path"])]
 
     @mcp.tool(annotations=annotation)
+    @guarded
     def get_editor_context(project_id: str, session_id: str) -> dict:
         """Read an explicitly published, expiring editor buffer, selection and diagnostics."""
         try:
@@ -266,6 +380,7 @@ def create_mcp(runtime: Runtime) -> FastMCP:
             raise ToolError(str(exc)) from None
 
     @mcp.tool(annotations=annotation)
+    @guarded_async
     async def verify_connection(project_id: str, challenge_id: str) -> dict:
         """Complete an explicit local verification challenge with a real bounded project read."""
         runtime.health.record("transport", "ok")
@@ -304,6 +419,7 @@ def create_mcp(runtime: Runtime) -> FastMCP:
             ) from None
 
     @mcp.tool(annotations=proposal_annotation)
+    @guarded
     def propose_changes(
         project_id: str,
         request_id: str,
@@ -329,6 +445,7 @@ def create_mcp(runtime: Runtime) -> FastMCP:
             ) from None
 
     @mcp.tool(annotations=annotation)
+    @guarded
     def get_change_status(project_id: str, change_id: str) -> dict:
         """Read a bounded change summary for the authenticated proposal owner."""
         try:
@@ -344,6 +461,7 @@ def create_mcp(runtime: Runtime) -> FastMCP:
             ) from None
 
     @mcp.tool(annotations=annotation)
+    @guarded
     def get_change_diff(project_id: str, change_id: str) -> dict:
         """Read the bounded saved-disk-to-proposal diff without applying it."""
         try:

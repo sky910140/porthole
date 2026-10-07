@@ -59,7 +59,7 @@ function validateBundle(bundleRoot, expectedVersion) {
     totalBytes += entry.size;
     if (totalBytes > 512 * 1024 * 1024) throw new Error('运行包超出大小限制。');
   }
-  if (!names.has('ai-zhagan.exe')) throw new Error('运行包缺少主程序。');
+  if (!names.has('porthole.exe')) throw new Error('运行包缺少主程序。');
   return { manifest, manifestHash: sha256(manifestBytes) };
 }
 
@@ -88,11 +88,11 @@ function installedBundleHealthy(installRoot, entries, manifestHash) {
 
 function installBundledRuntime(bundleRoot, installRoot, expectedVersion) {
   const { manifest, manifestHash } = validateBundle(bundleRoot, expectedVersion);
-  const executable = path.join(installRoot, 'ai-zhagan.exe');
+  const executable = path.join(installRoot, 'porthole.exe');
   if (installedBundleHealthy(installRoot, manifest.files, manifestHash)) return executable;
   const parent = path.dirname(installRoot);
   fs.mkdirSync(parent, { recursive: true });
-  const staging = fs.mkdtempSync(path.join(parent, '.ai-zhagan-stage-'));
+  const staging = fs.mkdtempSync(path.join(parent, '.porthole-stage-'));
   const backup = `${installRoot}.backup-${process.pid}-${Date.now()}`;
   const previous = `${installRoot}.previous`;
   let movedExisting = false;
@@ -255,7 +255,7 @@ class ServiceManager {
     const receipt = path.join(current, 'installed.json');
     try {
       const installed = JSON.parse(fs.readFileSync(receipt, 'utf8'));
-      if (installed.version === version && fs.existsSync(path.join(current, 'ai-zhagan.exe'))) return current;
+      if (installed.version === version && fs.existsSync(path.join(current, 'porthole.exe'))) return current;
     } catch { /* Install or repair below. */ }
     if (!this.loadManifest || !this.download || !this.extract) {
       throw new Error('离线首次启动无法安装运行包；请联网重试或明确选择已有服务。');

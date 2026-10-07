@@ -44,12 +44,12 @@ function safeIdentifier(value, label) {
 function buildQuestionPrompt(projectId, filePath = '.') {
   const project = safeIdentifier(projectId, '项目标识');
   const target = safeIdentifier(filePath, '文件路径');
-  return `请使用 AI Zhagan 读取项目 ${project} 中的 ${target}，先说明它的用途，再列出依据的文件路径。`;
+  return `请使用舷窗 Porthole 读取项目 ${project} 中的 ${target}，先说明它的用途，再列出依据的文件路径。`;
 }
 
 function buildResultPrompt(changeId) {
   const change = safeIdentifier(changeId, '修改编号');
-  return `请使用 AI Zhagan 查询修改单 ${change} 的当前状态，并说明是否已应用以及是否已运行测试。`;
+  return `请使用舷窗 Porthole 查询修改单 ${change} 的当前状态，并说明是否已应用以及是否已运行测试。`;
 }
 
 async function runOnboarding(deps) {

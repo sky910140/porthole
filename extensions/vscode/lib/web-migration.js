@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { profileGenerationGuard } = require('./profile-edit');
 
 function readJson(file) {
   if (fs.lstatSync(file).isSymbolicLink()) throw new Error('配置文件不能是链接。');
@@ -51,7 +52,9 @@ function checkFernetRecord(record, secret) {
   const material = crypto.hkdfSync('sha256', Buffer.from(secret), Buffer.from('project-mcp-storage'), Buffer.from('Fernet'), 32);
   const signature = signed.subarray(-32);
   const digest = crypto.createHmac('sha256', Buffer.from(material).subarray(0, 16)).update(signed.subarray(0, -32)).digest();
-  if (!crypto.timingSafeEqual(signature, digest)) throw new Error('GitHub Client Secret 与旧 OAuth 记录不匹配。');
+  if (!crypto.timingSafeEqual(signature, digest)) {
+    throw new Error('原 GitHub Client Secret 与旧 OAuth 记录不匹配。请使用创建旧连接时的原密钥；若原密钥已丢失，请创建新连接并在 ChatGPT 重新授权。');
+  }
 }
 
 function prepareMigration(sourceConfig, targetConfig, secret) {
@@ -115,7 +118,9 @@ function atomicWrite(file, bytes) {
   finally { if (fs.existsSync(temporary)) fs.rmSync(temporary); }
 }
 
-async function executeMigration(plan, { stop, start, quiesce = async () => {}, restore }) {
+async function executeMigration(plan, { stop, start, quiesce = async () => {}, restore,
+  guard = profileGenerationGuard(plan.targetFile) }) {
+  guard();
   const originalConfig = fs.readFileSync(plan.targetFile);
   const suffix = `.migration-${crypto.randomUUID()}`;
   const staging = `${plan.targetOAuth}${suffix}.stage`;
@@ -138,6 +143,7 @@ async function executeMigration(plan, { stop, start, quiesce = async () => {}, r
     }
     stopped = true;
     await stop();
+    guard();
     if (fs.existsSync(plan.targetOAuth)) {
       if (oauthEntries(plan.targetOAuth).length) throw new Error('当前 OAuth 记录在迁移时已变化。');
       fs.renameSync(plan.targetOAuth, backup);
@@ -147,11 +153,14 @@ async function executeMigration(plan, { stop, start, quiesce = async () => {}, r
     newOAuthInstalled = true;
     atomicWrite(plan.targetFile, Buffer.from(JSON.stringify(plan.nextConfig, null, 2)));
     await start();
+    guard();
     if (oldOAuthMoved) fs.rmSync(backup, { recursive: true, force: true });
     return { recordCount: plan.recordCount, publicUrl: plan.nextConfig.public_url };
   } catch (error) {
+    guard();
     try {
       if (stopped) await quiesce();
+      guard();
       atomicWrite(plan.targetFile, originalConfig);
       if (newOAuthInstalled) fs.rmSync(plan.targetOAuth, { recursive: true, force: true });
       if (oldOAuthMoved) fs.renameSync(backup, plan.targetOAuth);

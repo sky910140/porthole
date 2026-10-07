@@ -14,13 +14,13 @@ from .policy import ProjectPolicy
 
 
 def default_config_path() -> Path:
-    override = os.environ.get("AI_ZHAGAN_HOME")
+    override = os.environ.get("PORTHOLE_HOME")
     if override:
         root = Path(override)
     elif os.name == "nt" or os.environ.get("LOCALAPPDATA"):
-        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "AI Zhagan"
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Porthole"
     else:
-        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ai-zhagan"
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "porthole"
     return (root / "config.json").expanduser().resolve()
 
 

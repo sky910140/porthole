@@ -52,10 +52,12 @@ def test_only_matching_unexpired_challenge_can_record_tool_success(tmp_path):
         challenge["challenge_id"], "other", "verify_connection", read_succeeded=True
     )
     assert health.snapshot()["tool_call"]["state"] == "checking"
+    assert health.tool_call_project_id() == "demo"
     assert health.complete_challenge(
         challenge["challenge_id"], "demo", "verify_connection", read_succeeded=True
     )
     assert health.snapshot()["tool_call"]["state"] == "ok"
+    assert health.current_verified_project_id() == "demo"
 
     expired = health.create_challenge("demo", expected_tool="verify_connection")
     clock.value += timedelta(seconds=11)
@@ -65,6 +67,79 @@ def test_only_matching_unexpired_challenge_can_record_tool_success(tmp_path):
     result = health.snapshot()["tool_call"]
     assert result["state"] == "expired"
     assert result["error_code"] == "LEASE_EXPIRED"
+    assert health.current_verified_project_id() is None
+
+
+def test_verification_history_survives_live_expiry_and_restart(tmp_path):
+    from project_mcp.health import HealthRegistry
+
+    clock = Clock()
+    history = tmp_path / "verification-history.json"
+    health = HealthRegistry(ttl_seconds=30, history_path=history, now=clock)
+    challenge = health.create_challenge("demo")
+    assert health.complete_challenge(
+        challenge["challenge_id"], "demo", "verify_connection", read_succeeded=True
+    )
+    verified_at = health.verification_history()["demo"]
+    clock.value += timedelta(seconds=31)
+    assert health.snapshot()["tool_call"]["state"] == "expired"
+    assert HealthRegistry(history_path=history, now=clock).verification_history() == {
+        "demo": verified_at
+    }
+    health.clear_project("demo")
+    assert HealthRegistry(history_path=history, now=clock).verification_history() == {}
+
+
+def test_recent_activity_does_not_complete_verification():
+    from project_mcp.health import HealthRegistry
+
+    health = HealthRegistry(now=Clock())
+    health.record_tool_activity("demo")
+    assert "demo" in health.recent_tool_activity()
+    assert health.verification_history() == {}
+    assert health.snapshot()["tool_call"]["state"] == "unknown"
+
+
+def test_pending_challenge_expires_in_status_without_another_tool_call():
+    from project_mcp.health import HealthRegistry
+
+    clock = Clock()
+    health = HealthRegistry(ttl_seconds=300, challenge_ttl_seconds=10, now=clock)
+    health.create_challenge("demo")
+    clock.value += timedelta(seconds=11)
+    assert health.snapshot()["tool_call"]["state"] == "expired"
+    assert health.snapshot()["tool_call"]["error_code"] == "LEASE_EXPIRED"
+
+
+def test_old_project_challenge_expiry_does_not_cancel_new_project_check():
+    from project_mcp.health import HealthRegistry
+
+    clock = Clock()
+    health = HealthRegistry(challenge_ttl_seconds=10, now=clock)
+    old = health.create_challenge("old")
+    clock.value += timedelta(seconds=5)
+    health.create_challenge("new")
+    clock.value += timedelta(seconds=6)
+    assert not health.complete_challenge(
+        old["challenge_id"], "old", "verify_connection", read_succeeded=True
+    )
+    assert health.tool_call_project_id() == "new"
+    assert health.snapshot()["tool_call"]["state"] == "checking"
+
+
+def test_old_challenge_expiry_does_not_cancel_new_check_for_same_project():
+    from project_mcp.health import HealthRegistry
+
+    clock = Clock()
+    health = HealthRegistry(challenge_ttl_seconds=10, now=clock)
+    old = health.create_challenge("demo")
+    clock.value += timedelta(seconds=5)
+    health.create_challenge("demo")
+    clock.value += timedelta(seconds=6)
+    assert not health.complete_challenge(
+        old["challenge_id"], "demo", "verify_connection", read_succeeded=True
+    )
+    assert health.snapshot()["tool_call"]["state"] == "checking"
 
 
 def test_status_exposes_version_capabilities_and_layered_health(tmp_path):
@@ -93,6 +168,8 @@ def test_status_exposes_version_capabilities_and_layered_health(tmp_path):
         assert status["health"]["local_service"]["state"] == "ok"
         assert status["health"]["tool_call"]["state"] == "unknown"
         assert status["cloud_account_verified"] is False
+        assert status["current_verified_project_id"] is None
+        assert status["tool_call_project_id"] is None
 
         challenge = client.post("/api/verification-challenges", json={"project_id": "demo"})
         assert challenge.status_code == 200

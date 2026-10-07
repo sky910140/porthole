@@ -6,7 +6,7 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 async function run() {
-  const workspace = process.env.AI_ZHAGAN_FEASIBILITY_WORKSPACE;
+  const workspace = process.env.PORTHOLE_FEASIBILITY_WORKSPACE;
   assert.ok(workspace);
   const target = path.join(workspace, 'target.txt');
   const document = await vscode.workspace.openTextDocument(target);

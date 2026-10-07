@@ -31,7 +31,7 @@ def setup_upgrade(tmp_path):
     store = ChangeStore(state / "changes" / "changes.db", content)
     runtime = tmp_path / "runtime" / "current"
     runtime.mkdir(parents=True)
-    (runtime / "ai-zhagan.exe").write_bytes(b"old-runtime")
+    (runtime / "porthole.exe").write_bytes(b"old-runtime")
     manager = UpgradeManager(config, state, runtime, content_store=content, is_running=lambda: False)
     return manager, store, content, config, root
 
@@ -60,7 +60,7 @@ def test_snapshot_uses_sqlite_backup_and_verified_blobs(tmp_path):
     })
     snapshot_id = manager.prepare_upgrade("0.3")
     snapshot = manager.snapshot_root / snapshot_id
-    assert (snapshot / "runtime" / "ai-zhagan.exe").read_bytes() == b"old-runtime"
+    assert (snapshot / "runtime" / "porthole.exe").read_bytes() == b"old-runtime"
     assert sqlite3.connect(snapshot / "changes.db").execute(
         "SELECT COUNT(*) FROM changes"
     ).fetchone()[0] == 1
@@ -96,10 +96,10 @@ def test_failed_upgrade_restores_snapshot_but_new_changes_block_rollback(tmp_pat
     del store
     gc.collect()  # A stopped service has no open database handles on Windows.
     config.write_text("broken")
-    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"broken-runtime")
+    (manager.runtime_dir / "porthole.exe").write_bytes(b"broken-runtime")
     manager.restore_snapshot(snapshot_id)
     assert json.loads(config.read_text())["projects"][0]["id"] == "demo"
-    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"old-runtime"
+    assert (manager.runtime_dir / "porthole.exe").read_bytes() == b"old-runtime"
     assert not (manager.state_dir / "upgrade-in-progress.json").exists()
     assert root.is_dir()
 
@@ -144,10 +144,10 @@ def test_failed_start_after_offline_upgrade_can_restore_snapshot(tmp_path):
     snapshot_id = manager.prepare_upgrade("0.3")
     del store
     gc.collect()
-    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"new-runtime")
+    (manager.runtime_dir / "porthole.exe").write_bytes(b"new-runtime")
     manager.complete_upgrade(snapshot_id, health_check=lambda: True)
     manager.restore_snapshot(snapshot_id)
-    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"old-runtime"
+    assert (manager.runtime_dir / "porthole.exe").read_bytes() == b"old-runtime"
     assert json.loads(config.read_text()).get("config_version") is None
 
 
@@ -156,7 +156,7 @@ def test_verified_upgrade_can_be_rolled_back_only_without_new_config_or_changes(
     snapshot_id = manager.prepare_upgrade("0.3")
     del store
     gc.collect()
-    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"new-runtime")
+    (manager.runtime_dir / "porthole.exe").write_bytes(b"new-runtime")
     manager.complete_upgrade(snapshot_id, health_check=lambda: True)
     manager.finalize_upgrade(snapshot_id, health_check=lambda: True)
     assert manager.verified_receipt(snapshot_id).is_file()
@@ -165,7 +165,7 @@ def test_verified_upgrade_can_be_rolled_back_only_without_new_config_or_changes(
         manager.rollback_verified_snapshot(snapshot_id)
     config.write_text(config.read_text().rstrip())
     manager.rollback_verified_snapshot(snapshot_id)
-    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"old-runtime"
+    assert (manager.runtime_dir / "porthole.exe").read_bytes() == b"old-runtime"
     assert not manager.verified_receipt(snapshot_id).exists()
 
 
@@ -174,14 +174,14 @@ def test_tampered_verified_snapshot_does_not_leave_an_upgrade_marker(tmp_path):
     snapshot_id = manager.prepare_upgrade("0.3")
     del store
     gc.collect()
-    (manager.runtime_dir / "ai-zhagan.exe").write_bytes(b"new-runtime")
+    (manager.runtime_dir / "porthole.exe").write_bytes(b"new-runtime")
     manager.complete_upgrade(snapshot_id, health_check=lambda: True)
     manager.finalize_upgrade(snapshot_id, health_check=lambda: True)
-    (manager.snapshot_root / snapshot_id / "runtime" / "ai-zhagan.exe").write_bytes(b"tampered")
+    (manager.snapshot_root / snapshot_id / "runtime" / "porthole.exe").write_bytes(b"tampered")
     with pytest.raises(UpgradeError, match="checksum"):
         manager.rollback_verified_snapshot(snapshot_id)
     assert not manager.marker.exists()
-    assert (manager.runtime_dir / "ai-zhagan.exe").read_bytes() == b"new-runtime"
+    assert (manager.runtime_dir / "porthole.exe").read_bytes() == b"new-runtime"
 
 
 def test_missing_referenced_blob_blocks_snapshot(tmp_path):
@@ -208,7 +208,7 @@ def test_restore_does_not_require_damaged_new_content_key(tmp_path):
 def test_tampered_snapshot_cannot_be_restored(tmp_path):
     manager, _store, _content, _config, _root = setup_upgrade(tmp_path)
     snapshot_id = manager.prepare_upgrade("0.3")
-    (manager.snapshot_root / snapshot_id / "runtime" / "ai-zhagan.exe").write_bytes(b"tampered")
+    (manager.snapshot_root / snapshot_id / "runtime" / "porthole.exe").write_bytes(b"tampered")
     with pytest.raises(UpgradeError, match="checksum"):
         manager.restore_snapshot(snapshot_id)
 

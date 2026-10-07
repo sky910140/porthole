@@ -7,7 +7,7 @@ const {spawnSync} = require('node:child_process');
 const {chromium} = require('playwright');
 const root = path.resolve(__dirname, '../..');
 const python = process.env.PYTHON || path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'project-assistant-e2e-'));
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-e2e-'));
 const config = path.join(folder, 'local.json');
 function cli(...args) {
   const r = spawnSync(python, ['-m', 'project_mcp.cli', ...args, '--config', config], {cwd:root,encoding:'utf8', timeout:35000, windowsHide:true});

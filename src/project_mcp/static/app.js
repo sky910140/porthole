@@ -90,10 +90,10 @@ function changeItem(change) {
   facts.append(state, project, id); summary.append(title, facts);
   const actions = document.createElement('div'); actions.className = 'project-actions';
   actions.append(actionButton('复制 VS Code 操作', async () => {
-    await navigator.clipboard.writeText(`在 VS Code 运行“AI Zhagan: 查看修改建议”，输入修改编号：${change.change_id}`);
+    await navigator.clipboard.writeText(`在 VS Code 运行“舷窗: 查看修改建议”，输入修改编号：${change.change_id}`);
     message('已复制 VS Code 审阅步骤。');
   }), actionButton('复制网页查询提示', async () => {
-    await navigator.clipboard.writeText(`请使用 AI Zhagan 调用 get_change_status，project_id=${change.project_id}，change_id=${change.change_id}。只返回工具实际结果。`);
+    await navigator.clipboard.writeText(`请使用舷窗 Porthole 调用 get_change_status，project_id=${change.project_id}，change_id=${change.change_id}。只返回工具实际结果。`);
     message('已复制对应修改编号的查询提示。');
   }));
   li.append(summary, actions); return li;

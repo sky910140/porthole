@@ -35,7 +35,7 @@ class LocalFileOperations:
 
     @staticmethod
     def _write_temp(target: Path, data: bytes, mode: int) -> Path:
-        temp = target.with_name(f".{target.name}.ai-zhagan-{uuid.uuid4().hex}.tmp")
+        temp = target.with_name(f".{target.name}.porthole-{uuid.uuid4().hex}.tmp")
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode or 0o600)
         try:
             with os.fdopen(descriptor, "wb", closefd=False) as stream:

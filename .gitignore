@@ -19,3 +19,4 @@ config/local.json
 .superpowers/
 artifacts/
 extensions/vscode/runtime-bundle/
+extensions/vscode/tunnel-bundle/

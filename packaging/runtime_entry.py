@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the standalone AI Zhagan runtime."""
+"""PyInstaller entry point for the standalone Porthole runtime."""
 
 from project_mcp.cli import main
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def verify(executable: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="ai-zhagan-vault-") as directory:
+    with tempfile.TemporaryDirectory(prefix="porthole-vault-") as directory:
         root = Path(directory)
         config = root / "config.json"
 

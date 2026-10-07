@@ -58,8 +58,8 @@ def test_server_command_supports_python_and_frozen_runtime(tmp_path):
     assert server_command(config, executable="python.exe", frozen=False) == [
         "python.exe", "-m", "project_mcp.cli", "serve", "--config", str(config)
     ]
-    assert server_command(config, executable="ai-zhagan.exe", frozen=True) == [
-        "ai-zhagan.exe", "serve", "--config", str(config)
+    assert server_command(config, executable="porthole.exe", frozen=True) == [
+        "porthole.exe", "serve", "--config", str(config)
     ]
 
 

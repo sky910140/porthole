@@ -19,6 +19,7 @@ from .changes.executor import FileChanged, RecoveryRequired
 from .changes.store import IdempotencyConflict, InvalidTransition, RecordUnavailable
 from .editor_readiness import ReadinessBlocked
 from .protocol import service_info
+from .reset import ResetError
 from .runtime_limits import BusyError
 
 STATIC = Path(__file__).parent / "static"
@@ -56,6 +57,22 @@ class LocalBoundary(BaseHTTPMiddleware):
         return response
 
 
+class ResetBoundary(BaseHTTPMiddleware):
+    def __init__(self, app, runtime):
+        super().__init__(app)
+        self.runtime = runtime
+
+    async def dispatch(self, request, call_next):
+        if (not request.url.path.startswith("/api/")
+                or request.url.path in {"/api/status", "/api/shutdown", "/api/reset/prepare"}):
+            return await call_next(request)
+        try:
+            with self.runtime.operation():
+                return await call_next(request)
+        except ResetError as exc:
+            return JSONResponse({"error": str(exc), "error_code": exc.code}, status_code=409)
+
+
 async def body(request):
     if request.headers.get("content-type", "").split(";")[0] != "application/json":
         raise ValueError("JSON content type required")
@@ -77,7 +94,7 @@ def create_app(runtime):
             async with runtime.limits.status.slot():
                 runtime.health.record("local_service", "ok")
                 return JSONResponse({
-                    "service": "ai-zhagan",
+                    "service": "porthole",
                     "status": "ok",
                     **service_info().model_dump(mode="json"),
                     "health": runtime.health.snapshot(),
@@ -116,6 +133,13 @@ def create_app(runtime):
                     "cloud_account_verified": health_state["oauth"]["state"] == "ok",
                     "read_only": True,
                     "health": health_state,
+                    "verification_history": runtime.health.verification_history(),
+                    "current_verified_project_id": runtime.health.current_verified_project_id(),
+                    "tool_call_project_id": runtime.health.tool_call_project_id(),
+                    "recent_tool_activity": runtime.health.recent_tool_activity(),
+                    "reset_ready": runtime.reset_ready(request.headers.get("X-Reset-Owner")),
+                    "reset_operations_idle": runtime.reset_operations_idle(),
+                    "reset_pending": runtime.quiesced,
                 })
         except BusyError:
             return JSONResponse({"error": "Status service is busy"}, status_code=429)
@@ -123,6 +147,8 @@ def create_app(runtime):
     async def action(request: Request):
         try:
             path = request.url.path
+            if path == "/api/reset/prepare" and request.method == "POST":
+                return JSONResponse(runtime.prepare_reset(request.headers.get("X-Reset-Owner")))
             if path == "/api/pair" and request.method == "POST":
                 data = await body(request)
                 if not runtime.pairing.consume(str(data.get("pairing_code", ""))):
@@ -209,6 +235,8 @@ def create_app(runtime):
                 )
                 return JSONResponse(result, status_code=409 if result.get("error_code") else 200)
             return JSONResponse({"ok": True})
+        except ResetError as exc:
+            return JSONResponse({"error": str(exc), "error_code": exc.code}, status_code=409)
         except PermissionError:
             return JSONResponse({"error": "Path is not allowed"}, status_code=403)
         except RecordUnavailable:
@@ -248,6 +276,7 @@ def create_app(runtime):
         Route("/api/pair", action, methods=["POST"]),
         Route("/api/status", status), Route("/api/projects", action, methods=["PUT"]),
         Route("/api/shutdown", action, methods=["POST"]),
+        Route("/api/reset/prepare", action, methods=["POST"]),
         Route("/api/projects/{project_id}", action, methods=["DELETE", "PATCH"]),
         Route("/api/projects/{project_id}/scope", action, methods=["GET"]),
         Route("/api/context", action, methods=["PUT"]),
@@ -264,6 +293,7 @@ def create_app(runtime):
         Route("/api/changes/{change_id}/recovery", action, methods=["POST"]),
         Route("/api/editor-readiness/{session_id}", action, methods=["PUT", "DELETE"]),
         Route("/{name}", static)])
+    app.add_middleware(ResetBoundary, runtime=runtime)
     app.add_middleware(LocalBoundary, token=runtime.settings.admin_token,
                        port=runtime.settings.admin_port)
     return app

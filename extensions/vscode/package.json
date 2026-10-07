@@ -1,9 +1,9 @@
 {
-  "name": "ai-zhagan-context",
-  "displayName": "AI Zhagan Context",
-  "description": "将当前 VS Code 编辑上下文显式同步到本机 AI Zhagan 服务。",
-  "version": "0.4.0",
-  "publisher": "local-ai-zhagan",
+  "name": "porthole",
+  "displayName": "舷窗 Porthole",
+  "description": "让 AI 读取明确授权的本机文件夹，并在 VS Code 审阅修改建议。",
+  "version": "0.9.0",
+  "publisher": "sky910140",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
@@ -13,108 +13,113 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:aiZhagan.home",
-    "onCommand:aiZhagan.selectProject",
-    "onCommand:aiZhagan.configure",
-    "onCommand:aiZhagan.onboarding",
-    "onCommand:aiZhagan.pairManaged",
-    "onCommand:aiZhagan.migrateWeb",
-    "onCommand:aiZhagan.publishContext",
-    "onCommand:aiZhagan.disconnect",
-    "onCommand:aiZhagan.openAssistant",
-    "onCommand:aiZhagan.showChange",
-    "onCommand:aiZhagan.applyReviewedChange",
-    "onCommand:aiZhagan.rejectChange",
-    "onCommand:aiZhagan.revertChange",
-    "onCommand:aiZhagan.viewRecovery",
-    "onCommand:aiZhagan.showActivity"
+    "onCommand:porthole.home",
+    "onCommand:porthole.selectProject",
+    "onCommand:porthole.configure",
+    "onCommand:porthole.onboarding",
+    "onCommand:porthole.pairManaged",
+    "onCommand:porthole.migrateWeb",
+    "onCommand:porthole.publishContext",
+    "onCommand:porthole.disconnect",
+    "onCommand:porthole.openAssistant",
+    "onCommand:porthole.showChange",
+    "onCommand:porthole.applyReviewedChange",
+    "onCommand:porthole.rejectChange",
+    "onCommand:porthole.revertChange",
+    "onCommand:porthole.viewRecovery",
+    "onCommand:porthole.showActivity",
+    "onCommand:porthole.resetInitial"
   ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "aiZhagan.home",
-        "title": "AI Zhagan: 打开首页"
+        "command": "porthole.home",
+        "title": "舷窗: 打开首页"
       },
       {
-        "command": "aiZhagan.selectProject",
-        "title": "AI Zhagan: 选择或授权项目"
+        "command": "porthole.selectProject",
+        "title": "舷窗: 选择或授权项目"
       },
       {
-        "command": "aiZhagan.configure",
-        "title": "AI Zhagan: 配置连接"
+        "command": "porthole.configure",
+        "title": "舷窗: 配置连接"
       },
       {
-        "command": "aiZhagan.onboarding",
-        "title": "AI Zhagan: 开始或继续三步向导"
+        "command": "porthole.onboarding",
+        "title": "舷窗: 开始或继续三步向导"
       },
       {
-        "command": "aiZhagan.pairManaged",
-        "title": "AI Zhagan: 启动并安全配对本机服务"
+        "command": "porthole.pairManaged",
+        "title": "舷窗: 启动并安全配对本机服务"
       },
       {
-        "command": "aiZhagan.migrateWeb",
-        "title": "AI Zhagan: 迁移旧网页连接"
+        "command": "porthole.migrateWeb",
+        "title": "舷窗: 迁移旧网页连接"
       },
       {
-        "command": "aiZhagan.publishContext",
-        "title": "AI Zhagan: 发布当前编辑上下文"
+        "command": "porthole.publishContext",
+        "title": "舷窗: 发布当前编辑上下文"
       },
       {
-        "command": "aiZhagan.disconnect",
-        "title": "AI Zhagan: 断开并清除上下文"
+        "command": "porthole.disconnect",
+        "title": "舷窗: 断开并清除上下文"
       },
       {
-        "command": "aiZhagan.openAssistant",
-        "title": "AI Zhagan: 打开 ChatGPT / Claude"
+        "command": "porthole.openAssistant",
+        "title": "舷窗: 打开 ChatGPT / Claude"
       },
       {
-        "command": "aiZhagan.showChange",
-        "title": "AI Zhagan: 查看修改建议"
+        "command": "porthole.showChange",
+        "title": "舷窗: 查看修改建议"
       },
       {
-        "command": "aiZhagan.applyReviewedChange",
-        "title": "AI Zhagan: 应用已审阅修改"
+        "command": "porthole.applyReviewedChange",
+        "title": "舷窗: 应用已审阅修改"
       },
       {
-        "command": "aiZhagan.rejectChange",
-        "title": "AI Zhagan: 拒绝修改建议"
+        "command": "porthole.rejectChange",
+        "title": "舷窗: 拒绝修改建议"
       },
       {
-        "command": "aiZhagan.revertChange",
-        "title": "AI Zhagan: 撤销已应用修改"
+        "command": "porthole.revertChange",
+        "title": "舷窗: 撤销已应用修改"
       },
       {
-        "command": "aiZhagan.viewRecovery",
-        "title": "AI Zhagan: 查看修改恢复状态"
+        "command": "porthole.viewRecovery",
+        "title": "舷窗: 查看修改恢复状态"
       },
       {
-        "command": "aiZhagan.showActivity",
-        "title": "AI Zhagan: 查看最近活动"
+        "command": "porthole.showActivity",
+        "title": "舷窗: 查看最近活动"
+      },
+      {
+        "command": "porthole.resetInitial",
+        "title": "舷窗: 恢复初始状态"
       }
     ],
     "configuration": {
-      "title": "AI Zhagan",
+      "title": "舷窗 Porthole",
       "properties": {
-        "aiZhagan.serviceUrl": {
+        "porthole.serviceUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8766",
           "scope": "resource",
           "description": "本机管理服务 URL，仅允许回环主机和 1024–65535 端口。"
         },
-        "aiZhagan.projectId": {
+        "porthole.projectId": {
           "type": "string",
           "default": "",
           "scope": "resource",
           "description": "与当前工作区文件夹绑定的项目 ID。"
         },
-        "aiZhagan.autoSync": {
+        "porthole.autoSync": {
           "type": "boolean",
           "default": false,
           "scope": "resource",
           "description": "编辑后自动同步当前文件；默认关闭。"
         },
-        "aiZhagan.debounceMs": {
+        "porthole.debounceMs": {
           "type": "number",
           "default": 750,
           "minimum": 250,
@@ -128,12 +133,20 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node integration/run.js",
-    "check": "node --check extension.js && node --check lib/changes.js && node --check lib/core.js && node --check lib/diagnostics.js && node --check lib/home.js && node --check lib/onboarding.js && node --check lib/projects.js && node --check lib/protocol.js && node --check lib/readiness.js && node --check lib/service-manager.js && node --check lib/startup.js && node --check lib/upgrade-flow.js && node --check lib/view-state.js && node --check lib/web-migration.js && node --check lib/web-setup.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
+    "check": "node --check extension.js && node --check lib/initial-reset.js && node --check lib/profile-edit.js && node --check integration/reset.js && node --check lib/connection-wizard.js && node --check lib/connection-wizard-ui.js && node --check lib/tunnel-checks.js && node --check lib/changes.js && node --check lib/core.js && node --check lib/diagnostics.js && node --check lib/home.js && node --check lib/onboarding.js && node --check lib/private-tunnel.js && node --check lib/projects.js && node --check lib/protocol.js && node --check lib/readiness.js && node --check lib/service-manager.js && node --check lib/startup.js && node --check lib/upgrade-flow.js && node --check lib/view-state.js && node --check lib/web-migration.js && node --check lib/web-setup.js && node --check integration/run.js && node --check integration/runtime.js && node --test test/*.test.js",
     "package": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/package-extension.ps1",
     "package:vsix": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "3.6.0"
+    "@vscode/vsce": "4.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sky910140/porthole.git"
+  },
+  "homepage": "https://github.com/sky910140/porthole#readme",
+  "bugs": {
+    "url": "https://github.com/sky910140/porthole/issues"
   }
 }

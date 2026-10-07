@@ -10,14 +10,28 @@ import shutil
 import sqlite3
 import uuid
 from contextlib import closing
+from functools import wraps
 from pathlib import Path
 
 from .changes.content import ProtectedContentStore, StorageUnavailable
 from .config import Settings, migrate_config
+from .reset import ResetError, lifecycle_lock, require_no_pending_reset, reset_generation
 
 
 class UpgradeError(RuntimeError):
     pass
+
+
+def _serialized(function):
+    @wraps(function)
+    def wrapped(self, *args, **kwargs):
+        try:
+            with lifecycle_lock(self.config_path):
+                require_no_pending_reset(self.config_path)
+                return function(self, *args, **kwargs)
+        except ResetError as exc:
+            raise UpgradeError(str(exc)) from None
+    return wrapped
 
 
 def _sha256(path: Path) -> str:
@@ -65,9 +79,11 @@ class UpgradeManager:
         self.marker = self.state_dir / "upgrade-in-progress.json"
 
     def _require_stopped(self) -> None:
+        require_no_pending_reset(self.config_path)
         if self.is_running():
             raise UpgradeError("stop the local service before upgrading")
 
+    @_serialized
     def prepare_upgrade(self, target_version: str) -> str:
         self._require_stopped()
         if self.content_store is None:
@@ -133,6 +149,7 @@ class UpgradeManager:
                 "target_version": target_version,
                 "changes": fingerprint,
                 "files": files,
+                "reset_generation": reset_generation(self.config_path),
             }), encoding="utf-8")
             return snapshot_id
         except BaseException:
@@ -150,6 +167,9 @@ class UpgradeManager:
         if not (snapshot / "manifest.json").is_file():
             raise UpgradeError("upgrade snapshot is missing")
         manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        require_no_pending_reset(self.config_path)
+        if manifest.get("reset_generation") != reset_generation(self.config_path):
+            raise UpgradeError("reset generation changed; old snapshots cannot restore revoked grants")
         files = manifest.get("files", {})
         actual = {
             path.relative_to(snapshot).as_posix(): _sha256(path)
@@ -164,6 +184,7 @@ class UpgradeManager:
                 raise UpgradeError("another upgrade is active")
         return snapshot
 
+    @_serialized
     def restore_snapshot(self, snapshot_id: str) -> None:
         self._require_stopped()
         snapshot = self._snapshot(snapshot_id)
@@ -196,6 +217,7 @@ class UpgradeManager:
             shutil.rmtree(previous)
         self.marker.unlink()
 
+    @_serialized
     def complete_upgrade(self, snapshot_id: str, *, health_check) -> None:
         self._require_stopped()
         self._snapshot(snapshot_id)
@@ -215,6 +237,7 @@ class UpgradeManager:
         os.replace(staged_marker, self.marker)
 
     def finalize_upgrade(self, snapshot_id: str, *, health_check) -> None:
+        require_no_pending_reset(self.config_path)
         self._snapshot(snapshot_id)
         marker = json.loads(self.marker.read_text(encoding="utf-8"))
         if marker.get("phase") != "awaiting_verification":
@@ -227,7 +250,7 @@ class UpgradeManager:
         staged.write_text(json.dumps({
             "snapshot_id": snapshot_id,
             "config_sha256": _sha256(self.config_path),
-            "runtime_sha256": _sha256(self.runtime_dir / "ai-zhagan.exe"),
+            "runtime_sha256": _sha256(self.runtime_dir / "porthole.exe"),
             "changes": _changes_fingerprint(self.db_path),
         }), encoding="utf-8")
         os.replace(staged, receipt)
@@ -238,6 +261,7 @@ class UpgradeManager:
             raise UpgradeError("invalid snapshot id")
         return self.state_dir / "verified-upgrades" / f"{snapshot_id}.json"
 
+    @_serialized
     def rollback_verified_snapshot(self, snapshot_id: str) -> None:
         self._require_stopped()
         if self.marker.exists():
@@ -250,7 +274,7 @@ class UpgradeManager:
             raise UpgradeError("verified upgrade receipt does not match")
         if _sha256(self.config_path) != recorded.get("config_sha256"):
             raise UpgradeError("configuration changed since upgrade; refusing rollback")
-        if _sha256(self.runtime_dir / "ai-zhagan.exe") != recorded.get("runtime_sha256"):
+        if _sha256(self.runtime_dir / "porthole.exe") != recorded.get("runtime_sha256"):
             raise UpgradeError("runtime changed since upgrade; refusing rollback")
         if _changes_fingerprint(self.db_path) != recorded.get("changes"):
             raise UpgradeError("new changes exist; refusing silent rollback")

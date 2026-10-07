@@ -18,3 +18,14 @@ test('diagnosis does not claim account or tool success from public discovery alo
   assert.equal(classifyConnection({ ...base, health: { oauth: { state: 'ok' }, tool_call: { state: 'ok' } } }).code, 'READY');
   assert.equal(classifyConnection({ ...base, publicReachable: false }).code, 'HTTPS_UNREACHABLE');
 });
+
+test('private tunnel diagnosis distinguishes stopped transport from an unverified tool call', () => {
+  const base = { runtimeInstalled: true, configExists: true, owned: true,
+    authMode: 'local', tunnel: { configured: true, ready: false } };
+  assert.equal(classifyConnection(base).code, 'TUNNEL_STOPPED');
+  assert.equal(classifyConnection(base).repair, 'start-tunnel');
+  assert.equal(classifyConnection({ ...base, tunnel: { configured: true, ready: true } }).code,
+    'TOOL_UNVERIFIED');
+  assert.equal(classifyConnection({ ...base, tunnel: { configured: true, ready: true },
+    health: { tool_call: { state: 'ok' } } }).code, 'READY');
+});

@@ -22,8 +22,8 @@ def test_default_config_uses_user_app_data(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
     monkeypatch.chdir(tmp_path)
     result = default_config_path()
-    assert result == (tmp_path / "LocalAppData" / "AI Zhagan" / "config.json").resolve()
-    assert result.parent.name == "AI Zhagan"
+    assert result == (tmp_path / "LocalAppData" / "Porthole" / "config.json").resolve()
+    assert result.parent.name == "Porthole"
 
 
 def test_pairing_code_is_hashed_single_use_and_expires(tmp_path):

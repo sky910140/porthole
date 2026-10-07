@@ -9,7 +9,7 @@ const test = require('node:test');
 const { prepareMigration, executeMigration, managedStatus } = require('../lib/web-migration');
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-migrate-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-migrate-'));
   const oldState = path.join(root, 'old-state');
   const newState = path.join(root, 'new-state');
   const oldConfig = path.join(root, 'old.json');
@@ -40,7 +40,8 @@ function fixture() {
 test('preflight validates old OAuth secret and preserves new project and tokens', () => {
   const f = fixture();
   try {
-    assert.throws(() => prepareMigration(f.oldConfig, f.newConfig, 'wrong'), /Secret|密钥/);
+    assert.throws(() => prepareMigration(f.oldConfig, f.newConfig, 'wrong'),
+      /原.*Client Secret.*新连接/);
     const plan = prepareMigration(f.oldConfig, f.newConfig, f.secret);
     assert.equal(plan.recordCount, 1);
     assert.deepEqual(plan.nextConfig.projects, [{ id: 'current', root: f.root }]);
@@ -110,5 +111,27 @@ test('managed status rejects another config on the same port', async () => {
     assert.equal((await managedStatus(f.newConfig, async () => ({ ok: true,
       json: async () => ({ config_id: expected, protocol_version: '1.0.0',
         mcp_port: 8765, auth_mode: 'local', public_url: null }) }))).config_id, expected);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('migration rollback cannot restore grants after another window resets', async () => {
+  const f = fixture();
+  try {
+    const plan = prepareMigration(f.oldConfig, f.newConfig, f.secret);
+    const clean = JSON.stringify({ projects: [], auth_mode: 'local' });
+    let restored = false;
+    await assert.rejects(executeMigration(plan, {
+      stop: async () => {},
+      start: async () => {
+        fs.writeFileSync(f.newConfig, clean);
+        fs.rmSync(plan.targetOAuth, { recursive: true, force: true });
+        fs.writeFileSync(path.join(path.dirname(f.newConfig), '.reset-receipt.json'),
+          JSON.stringify({ reset_id: 'b'.repeat(32) }));
+        throw new Error('interrupted');
+      }, quiesce: async () => {}, restore: async () => { restored = true; },
+    }), /重置|恢复初始状态/);
+    assert.equal(fs.readFileSync(f.newConfig, 'utf8'), clean);
+    assert.equal(fs.existsSync(plan.targetOAuth), false);
+    assert.equal(restored, false);
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });

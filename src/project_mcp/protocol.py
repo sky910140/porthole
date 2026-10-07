@@ -8,21 +8,24 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import __version__
 from .changes.models import ChangeRequest, ChangeResult, FileChange
 
 PROTOCOL_VERSION = "1.0.0"
-SERVICE_VERSION = "0.4.0"
+SERVICE_VERSION = __version__
 CAPABILITIES = [
     "layered_health",
     "verification_challenge",
     "bounded_reads",
     "project_policy",
     "batch_reads",
+    "bounded_table_reads",
     "scope_preview",
     "change_proposals",
     "local_review_required",
     "editor_readiness_lease",
     "recoverable_local_apply",
+    "initial_reset",
 ]
 
 CheckState = Literal["unknown", "checking", "ok", "failed", "expired"]

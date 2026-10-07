@@ -16,7 +16,7 @@ function Get-FileSha256([string]$FilePath) {
   finally { $stream.Dispose(); $algorithm.Dispose() }
 }
 
-& $python -m PyInstaller --noconfirm --clean --onedir --name ai-zhagan `
+& $python -m PyInstaller --noconfirm --clean --onedir --name porthole `
   --paths (Join-Path $assistantRoot 'src') `
   --distpath $distRoot --workpath $buildRoot `
   --specpath $OutputRoot `
@@ -27,10 +27,10 @@ function Get-FileSha256([string]$FilePath) {
   --collect-submodules project_mcp $entry
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller runtime build failed.' }
 
-$runtimeDir = Join-Path $distRoot 'ai-zhagan'
-$executable = Join-Path $runtimeDir 'ai-zhagan.exe'
+$runtimeDir = Join-Path $distRoot 'porthole'
+$executable = Join-Path $runtimeDir 'porthole.exe'
 if (-not (Test-Path -LiteralPath $executable)) { throw 'Runtime executable was not created.' }
-$zip = Join-Path $OutputRoot 'ai-zhagan-windows-x64.zip'
+$zip = Join-Path $OutputRoot 'porthole-windows-x64.zip'
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $runtimeDir '*') -DestinationPath $zip -CompressionLevel Optimal
 $hash = Get-FileSha256 $zip

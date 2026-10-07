@@ -28,7 +28,7 @@ def discovery_status(port):
 
 async def verify(executable: Path):
     secret = "isolated-test-github-secret"
-    with tempfile.TemporaryDirectory(prefix="ai-zhagan-web-migrate-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="porthole-web-migrate-") as temporary:
         root = Path(temporary)
         old_state, new_state = root / "old-state", root / "new-state"
         old_state.mkdir()

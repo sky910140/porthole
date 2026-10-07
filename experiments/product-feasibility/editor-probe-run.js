@@ -16,7 +16,7 @@ async function main() {
     vscodeExecutablePath: executable,
     extensionDevelopmentPath: path.join(repositoryRoot, 'extensions', 'vscode'),
     extensionTestsPath: path.join(__dirname, 'editor-probe-suite.js'),
-    extensionTestsEnv: { AI_ZHAGAN_FEASIBILITY_WORKSPACE: workspace },
+    extensionTestsEnv: { PORTHOLE_FEASIBILITY_WORKSPACE: workspace },
     launchArgs: [workspace, '--disable-extensions', '--skip-welcome', '--skip-release-notes'],
   });
 }

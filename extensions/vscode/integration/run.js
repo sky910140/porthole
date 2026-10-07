@@ -9,7 +9,7 @@ const { resolveTestRuntime, resolveExtensionDevelopmentPath } = require('./runti
 async function main() {
   const sourceExtensionPath = path.resolve(__dirname, '..');
   const extensionDevelopmentPath = resolveExtensionDevelopmentPath(process.env, sourceExtensionPath);
-  const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-vscode-'));
+  const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-vscode-'));
   const userDataDir = path.join(testRoot, 'user-data');
   const extensionsDir = path.join(testRoot, 'extensions');
   const workspaceDir = path.join(testRoot, 'workspace');
@@ -20,7 +20,9 @@ async function main() {
     ...resolveTestRuntime(),
     extensionDevelopmentPath,
     extensionTestsPath: path.join(__dirname, 'suite.js'),
-    extensionTestsEnv: { AI_ZHAGAN_EXTENSION_TEST: '1' },
+    extensionTestsEnv: { PORTHOLE_EXTENSION_TEST: '1',
+      PORTHOLE_TEST_RESET_RUNTIME: fs.existsSync(path.join(extensionDevelopmentPath, 'runtime-bundle', 'bundle.json')) ? '1' : '0',
+      LOCALAPPDATA: path.join(testRoot, 'managed-local') },
     launchArgs: [
       path.join(workspaceDir, 'integration.code-workspace'),
       '--disable-extensions',

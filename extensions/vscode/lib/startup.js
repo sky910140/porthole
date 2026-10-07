@@ -3,7 +3,7 @@
 const path = require('node:path');
 
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const VALUE = 'AI Zhagan';
+const VALUE = 'Porthole';
 
 function loginCommand(executable, config) {
   for (const value of [executable, config]) {
@@ -30,7 +30,7 @@ async function setLoginStartup(enabled, executable, config, execute, platform = 
   const command = loginCommand(executable, config);
   const entry = await readLoginStartup(execute, platform);
   if (enabled) {
-    if (entry && !entry.includes(command)) throw new Error('存在属于其他安装的 AI Zhagan 开机启动项，请先检查 Windows 启动应用。');
+    if (entry && !entry.includes(command)) throw new Error('存在属于其他安装的 Porthole 开机启动项，请先检查 Windows 启动应用。');
     if (entry) return;
     await execute('reg.exe', ['add', RUN_KEY, '/v', VALUE, '/t', 'REG_SZ', '/d', command, '/f'], { windowsHide: true });
   } else if (entry && entry.includes(command)) {

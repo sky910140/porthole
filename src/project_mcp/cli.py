@@ -19,6 +19,17 @@ import httpx
 
 from .changes.content import StorageUnavailable
 from .config import Settings, default_config_path, load_config, save_config
+from .reset import (
+    RESET_PROFILE_LOCK_TIMEOUT,
+    LocalReset,
+    ResetError,
+    lifecycle_lock,
+    profile_edit_lock,
+    reject_links,
+    require_no_pending_reset,
+    reset_generation,
+    reset_lock,
+)
 from .upgrade import UpgradeError
 
 
@@ -54,6 +65,20 @@ def server_command(path: Path, *, executable: str | None = None, frozen: bool | 
 
 
 async def serve(settings, path):
+    with lifecycle_lock(path):
+        require_no_pending_reset(path)
+        # A reset may have completed while this process waited for the lifecycle lock.
+        await _serve(_fresh_start_settings(settings, path), path)
+
+
+def _fresh_start_settings(settings, path):
+    current = load_config(path)
+    if (current.admin_token != settings.admin_token or current.mcp_token != settings.mcp_token):
+        raise ResetError("RESET_PENDING", "Reset invalidated this startup request; start again explicitly")
+    return current
+
+
+async def _serve(settings, path):
     import uvicorn
 
     from .server import Runtime, create_admin_app, create_mcp
@@ -94,6 +119,13 @@ async def serve(settings, path):
 
 
 def start(settings, path):
+    with reset_lock(path):
+        require_no_pending_reset(path)
+        return _start(_fresh_start_settings(settings, path), path)
+
+
+def _start(settings, path):
+    require_no_pending_reset(path)
     if _upgrade_blocks_start(settings.state_dir or path.parent / ".local"):
         raise ValueError("Upgrade in progress; complete or restore the snapshot before starting")
     if status(settings, path):
@@ -160,6 +192,7 @@ def _upgrade_command(args, path: Path) -> None:
     from .changes.content import KeyringKeyProvider, ProtectedContentStore
     from .upgrade import UpgradeManager, _changes_fingerprint
 
+    require_no_pending_reset(path)
     if args.runtime_dir is None:
         raise ValueError("--runtime-dir is required for upgrade commands")
     state = (args.state_dir or path.parent / ".local").resolve()
@@ -196,10 +229,56 @@ def _upgrade_command(args, path: Path) -> None:
         print("Upgrade verified and finalized")
     else:
         manager.complete_upgrade(args.snapshot_id, health_check=lambda: (
-            (manager.runtime_dir / "ai-zhagan.exe").is_file()
+            (manager.runtime_dir / "porthole.exe").is_file()
             and isinstance(_changes_fingerprint(manager.db_path), list)
         ))
         print("Offline upgrade checks passed; start the service and verify connection")
+
+
+def _grant_command(command, path):
+    with reset_lock(path):
+        require_no_pending_reset(path)
+        settings = load_config(path)
+        if command == "credential-store":
+            from .auth import store_github_credentials
+
+            payload = sys.stdin.read(16_385)
+            if len(payload) > 16_384:
+                raise ValueError("credential input too large")
+            credentials = json.loads(payload)
+            if not isinstance(credentials, dict):
+                raise ValueError("credential input must be an object")
+            store_github_credentials(settings.state_dir,
+                                     credentials.get("client_id"), credentials.get("client_secret"))
+            print("Credentials stored in the operating system vault")
+        else:
+            from .pairing import PairingStore
+
+            result = PairingStore(settings.state_dir).issue()
+            print(json.dumps({
+                **result,
+                "service_url": f"http://127.0.0.1:{settings.admin_port}",
+            }))
+
+
+def _profile_lease(path, expected_reset_id):
+    reject_links(path)
+    if not path.is_file():
+        raise ResetError("RESET_CONFIG_UNAVAILABLE", "Configuration is missing; initialize it before editing")
+    require_no_pending_reset(path)
+    generation = reset_generation(path)
+    if (expected_reset_id is not None and expected_reset_id != "none"
+            and not re.fullmatch(r"[0-9a-f]{32}", expected_reset_id)):
+        raise ResetError("RESET_STATE_UNAVAILABLE", "Invalid expected reset generation")
+    with profile_edit_lock(path, timeout=1):
+        require_no_pending_reset(path)
+        current = reset_generation(path)
+        expected = None if expected_reset_id == "none" else expected_reset_id
+        if current != generation or (expected_reset_id is not None and current != expected):
+            raise ResetError("RESET_PENDING", "Reset invalidated this profile edit; retry explicitly")
+        print(json.dumps({"ready": True}), flush=True)
+        while sys.stdin.read(4096):
+            pass
 
 
 def main(argv=None):
@@ -210,6 +289,8 @@ def main(argv=None):
         "upgrade-prepare", "upgrade-restore", "upgrade-complete", "upgrade-finalize",
         "upgrade-rollback",
         "credential-store", "credential-clear",
+        "reset-check", "reset-local",
+        "profile-lease",
     ])
     parser.add_argument("--config", type=Path)
     parser.add_argument("--project", type=Path, default=Path.cwd())
@@ -221,9 +302,25 @@ def main(argv=None):
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--snapshot-id")
     parser.add_argument("--target-version")
+    parser.add_argument("--expected-reset-id")
     args = parser.parse_args(argv)
-    path = (args.config or default_config_path()).resolve()
+    path = (args.config or default_config_path()).absolute()
     try:
+        if args.command == "profile-lease":
+            _profile_lease(path, args.expected_reset_id)
+            return 0
+        if args.command in {"reset-check", "reset-local"}:
+            if args.command == "reset-local":
+                with reset_lock(path), profile_edit_lock(path, timeout=RESET_PROFILE_LOCK_TIMEOUT):
+                    result = LocalReset(path).run()
+            else:
+                with profile_edit_lock(path, timeout=RESET_PROFILE_LOCK_TIMEOUT):
+                    result = LocalReset(path).check()
+            print(json.dumps(result))
+            return 0
+        if args.command in {"start", "serve", "pair", "credential-store"}:
+            require_no_pending_reset(path)
+        path = path.resolve()
         if args.command == "init":
             if path.exists():
                 raise ValueError("Configuration already exists; refusing to overwrite")
@@ -236,20 +333,11 @@ def main(argv=None):
         if args.command.startswith("upgrade-"):
             _upgrade_command(args, path)
             return 0
+        if args.command in {"pair", "credential-store"}:
+            _grant_command(args.command, path)
+            return 0
         settings = load_config(path)
-        if args.command == "credential-store":
-            from .auth import store_github_credentials
-
-            payload = sys.stdin.read(16_385)
-            if len(payload) > 16_384:
-                raise ValueError("credential input too large")
-            credentials = json.loads(payload)
-            if not isinstance(credentials, dict):
-                raise ValueError("credential input must be an object")
-            store_github_credentials(settings.state_dir,
-                                     credentials.get("client_id"), credentials.get("client_secret"))
-            print("Credentials stored in the operating system vault")
-        elif args.command == "credential-clear":
+        if args.command == "credential-clear":
             from .auth import clear_github_credentials
 
             clear_github_credentials(settings.state_dir)
@@ -276,7 +364,7 @@ def main(argv=None):
                 registry.record("local_service", "failed", "STORAGE_UNAVAILABLE", retryable=True)
                 health = registry.snapshot()
             fixes = {
-                "local_service": "Run project-assistant start and inspect the local log if it fails.",
+                "local_service": "Run porthole start and inspect the local log if it fails.",
                 "transport": "Check the HTTPS endpoint or tunnel, then retry verification.",
                 "oauth": "Reconnect the MCP integration with the authorized account.",
                 "tool_call": "Create a verification challenge and call verify_connection from the AI client.",
@@ -294,14 +382,6 @@ def main(argv=None):
         elif args.command == "token":
             # Only this explicit user-facing command prints credentials; never include in status/logs.
             print(settings.admin_token if args.kind == "admin" else settings.mcp_token)
-        elif args.command == "pair":
-            from .pairing import PairingStore
-
-            result = PairingStore(settings.state_dir).issue()
-            print(json.dumps({
-                **result,
-                "service_url": f"http://127.0.0.1:{settings.admin_port}",
-            }))
         elif args.command in {"diagnostics-preview", "diagnostics-export"}:
             from .diagnostics import Diagnostics
             from .protocol import service_info
@@ -321,12 +401,18 @@ def main(argv=None):
                     include_paths=args.include_paths,
                 ), ensure_ascii=False, indent=2))
             else:
-                target = (args.output or Path.cwd() / "ai-zhagan-diagnostics.zip").resolve()
+                target = (args.output or Path.cwd() / "porthole-diagnostics.zip").resolve()
                 print(diagnostics.export_diagnostics(
                     target, include_paths=args.include_paths,
                 ))
         return 0
+    except ResetError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except (ValueError, OSError, httpx.HTTPError, UpgradeError, StorageUnavailable) as exc:
+        if args.command in {"reset-check", "reset-local", "profile-lease"}:
+            print("RESET_STATE_UNAVAILABLE: Local reset could not complete; resume after inspection", file=sys.stderr)
+            return 2
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

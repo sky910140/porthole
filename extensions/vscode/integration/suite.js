@@ -5,11 +5,36 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const vscode = require('vscode');
+const { runInitialReset } = require('./reset');
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function deferred() {
   let resolve;
   const promise = new Promise((done) => { resolve = done; });
   return { promise, resolve };
+}
+
+async function waitForRequest(gate, publishing, label, describe) {
+  let seen = false;
+  let timer;
+  try {
+    await Promise.race([
+      gate.seen.promise.then(() => { seen = true; }),
+      publishing.then(() => { if (!seen) throw new Error('publish finished without the expected request'); }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('request timed out')), 10000); }),
+    ]);
+  } catch (error) {
+    throw new Error(`${label}: ${error.message}; ${JSON.stringify(describe())}`, { cause: error });
+  } finally { clearTimeout(timer); }
+}
+
+async function activateDocument(document) {
+  await vscode.window.showTextDocument(document);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) return;
+    await wait(50);
+  }
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), document.uri.toString(),
+    'expected text editor must be active before publishing');
 }
 
 async function run() {
@@ -21,6 +46,13 @@ async function run() {
     { id: 'project-b', name: 'Project B', root: folderB.uri.fsPath, share_editor_buffers: true },
   ];
   const requests = [];
+  const describePublish = () => ({
+    activeDocument: vscode.window.activeTextEditor?.document.uri.toString(),
+    folders: folders.map((folder) => ({ name: folder.name,
+      projectId: vscode.workspace.getConfiguration('porthole', folder.uri).get('projectId'),
+      serviceUrl: vscode.workspace.getConfiguration('porthole', folder.uri).get('serviceUrl') })),
+    requests: requests.slice(-8).map(({ method, url }) => ({ method, url })),
+  });
   const serverSessions = new Map();
   const readinessSessions = new Map();
   const change = {
@@ -33,6 +65,9 @@ async function run() {
   };
   let delayedStatus = null;
   let delayedPut = null;
+  let delayedScope = null;
+  let failScope = false;
+  const activeGates = new Set();
   const server = http.createServer((request, response) => {
     let body = '';
     request.setEncoding('utf8');
@@ -51,6 +86,21 @@ async function run() {
           protocol_version: '1.0.0', service_version: '0.2.0', capabilities: [],
           projects, sessions: [...serverSessions.keys()],
         }));
+      }
+      if (request.method === 'GET' && request.url === '/api/projects/project-a/scope') {
+        if (delayedScope) {
+          const gate = delayedScope;
+          delayedScope = null;
+          gate.seen.resolve();
+          await gate.release.promise;
+        }
+        if (failScope) {
+          response.statusCode = 503;
+          return response.end(JSON.stringify({ error: 'preview service unavailable' }));
+        }
+        return response.end(JSON.stringify({ project_id: 'project-a', accessible_files: 1,
+          scan_complete: true, excluded_by_reason: { sensitive_path: 2 }, files_truncated: false,
+          files: [{ path: 'inside-a.txt', size: 11, read_as: 'text_candidate' }] }));
       }
       if (request.method === 'PUT' && request.url === '/api/context') {
         if (delayedPut) {
@@ -100,24 +150,51 @@ async function run() {
       response.statusCode = 404; response.end(JSON.stringify({ error: 'not found' }));
     });
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(18766, '127.0.0.1', resolve); });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const serviceUrl = `http://127.0.0.1:${server.address().port}`;
   try {
-    const extension = vscode.extensions.getExtension('local-ai-zhagan.ai-zhagan-context');
+    const extension = vscode.extensions.getExtension('sky910140.porthole');
     assert.ok(extension);
     const api = await extension.activate();
+    const initialHome = (await api.currentHomeState()).view;
+    assert.equal(initialHome.error, null, 'opening home without an authorized project must not show a verification error');
+    assert.equal(initialHome.project, null);
+    assert.equal(initialHome.challengeExpiresAt, null);
     assert.ok((await vscode.commands.getCommands(true)).includes('workbench.action.browser.open'));
-    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.pairManaged'));
-    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.onboarding'));
-    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.home'));
-    assert.ok((await vscode.commands.getCommands(true)).includes('aiZhagan.selectProject'));
-    await api.configureConnection(folderA, 'http://127.0.0.1:18766', 'project-a', 'extension-secret-a');
-    await api.configureConnection(folderB, 'http://127.0.0.1:18766', 'project-b', 'extension-secret-b');
+    assert.ok((await vscode.commands.getCommands(true)).includes('porthole.pairManaged'));
+    assert.ok((await vscode.commands.getCommands(true)).includes('porthole.onboarding'));
+    assert.ok((await vscode.commands.getCommands(true)).includes('porthole.home'));
+    assert.ok((await vscode.commands.getCommands(true)).includes('porthole.selectProject'));
+    await api.configureConnection(folderA, serviceUrl, 'project-a', 'extension-secret-a');
+    await api.configureConnection(folderB, serviceUrl, 'project-b', 'extension-secret-b');
     assert.equal(await api.getStoredToken(folderA), 'extension-secret-a');
     assert.equal(await api.getStoredToken(folderB), 'extension-secret-b');
     const homeState = await api.currentHomeState();
     assert.equal(homeState.view.projects.length, 2);
+    assert.equal(homeState.view.error, null);
     assert.equal(JSON.stringify(homeState.view).includes('extension-secret-a'), false);
     await api.openHome();
+    const scopeGate = { seen: deferred(), release: deferred() };
+    delayedScope = scopeGate;
+    const previewing = api.handleHomeAction('preview-scope');
+    try {
+      await waitForRequest(scopeGate, previewing, 'scope preview progress', describePublish);
+      assert.equal((await api.currentHomeState()).view.scopePreview.loading, true);
+    } finally { scopeGate.release.resolve(); }
+    await previewing;
+    assert.deepEqual((await api.currentHomeState()).view.scopePreview.files,
+      [{ path: 'inside-a.txt', size: 11, read_as: 'text_candidate' }]);
+    failScope = true;
+    await api.handleHomeAction('preview-scope');
+    assert.match((await api.currentHomeState()).view.scopePreview.error, /preview service unavailable/);
+    failScope = false;
+    await api.handleHomeAction('preview-scope');
+    assert.equal((await api.currentHomeState()).view.scopePreview.error, undefined);
+    await api.setupPrivateTunnel();
+    const wizardState = await api.wizardSnapshot();
+    assert.equal(wizardState.projectId, homeState.view.project.id);
+    assert.equal(wizardState.hasKey, false);
+    assert.equal(JSON.stringify(wizardState).includes('extension-secret-a'), false);
 
     const documentA = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(folderA.uri, 'inside-a.txt'));
     const editorA = await vscode.window.showTextDocument(documentA);
@@ -149,8 +226,8 @@ async function run() {
     await api.publishReviewReadiness('change-1');
     assert.equal((await api.applyReviewedChange('change-1')).state, 'applied');
 
-    await vscode.workspace.getConfiguration('aiZhagan', folderA.uri).update('autoSync', true, vscode.ConfigurationTarget.WorkspaceFolder);
-    await vscode.workspace.getConfiguration('aiZhagan', folderA.uri).update('debounceMs', 250, vscode.ConfigurationTarget.WorkspaceFolder);
+    await vscode.workspace.getConfiguration('porthole', folderA.uri).update('autoSync', true, vscode.ConfigurationTarget.WorkspaceFolder);
+    await vscode.workspace.getConfiguration('porthole', folderA.uri).update('debounceMs', 250, vscode.ConfigurationTarget.WorkspaceFolder);
     const reopenedEditorA = await vscode.window.showTextDocument(documentA);
     await reopenedEditorA.edit((edit) => edit.insert(new vscode.Position(0, 0), 'changed '));
     await vscode.window.showTextDocument(documentB);
@@ -158,7 +235,7 @@ async function run() {
     await wait(500);
     assert.equal(requests.filter((item) => item.method === 'PUT').length, uploadsBeforeWait);
 
-    const outsidePath = path.join(os.tmpdir(), `ai-zhagan-outside-${process.pid}.txt`);
+    const outsidePath = path.join(os.tmpdir(), `porthole-outside-${process.pid}.txt`);
     fs.writeFileSync(outsidePath, 'outside');
     try {
       await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(outsidePath));
@@ -167,13 +244,14 @@ async function run() {
       assert.equal(requests.length, requestCount);
     } finally { fs.rmSync(outsidePath, { force: true }); }
 
-    await vscode.workspace.getConfiguration('aiZhagan', folderA.uri).update('autoSync', false, vscode.ConfigurationTarget.WorkspaceFolder);
-    await vscode.window.showTextDocument(documentA);
+    await vscode.workspace.getConfiguration('porthole', folderA.uri).update('autoSync', false, vscode.ConfigurationTarget.WorkspaceFolder);
+    await activateDocument(documentA);
     const statusGate = { seen: deferred(), release: deferred() };
+    activeGates.add(statusGate);
     delayedStatus = statusGate;
     const putsBeforeDelayedGet = requests.filter((item) => item.method === 'PUT').length;
     const publishWaitingOnStatus = api.publishActiveContext({ silent: true });
-    await statusGate.seen.promise;
+    await waitForRequest(statusGate, publishWaitingOnStatus, 'delayed status', describePublish);
     const disconnectDuringStatus = api.disconnect();
     statusGate.release.resolve();
     await Promise.all([publishWaitingOnStatus, disconnectDuringStatus]);
@@ -181,18 +259,19 @@ async function run() {
     assert.equal(serverSessions.has(api.getSessionId(folderA)), false);
     assert.equal(serverSessions.has(api.getSessionId(folderB)), true);
 
-    await api.configureConnection(folderA, 'http://127.0.0.1:18766', 'project-a', 'extension-secret-a2');
-    await vscode.window.showTextDocument(documentA);
+    await api.configureConnection(folderA, serviceUrl, 'project-a', 'extension-secret-a2');
+    await activateDocument(documentA);
     const putGate = { seen: deferred(), release: deferred() };
+    activeGates.add(putGate);
     delayedPut = putGate;
     const publishWaitingOnPut = api.publishActiveContext({ silent: true });
-    await putGate.seen.promise;
+    await waitForRequest(putGate, publishWaitingOnPut, 'delayed context PUT', describePublish);
     assert.equal(vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.toString(), folderA.uri.toString());
     const disconnectDuringPut = api.disconnect();
     await wait(25);
     const putsWhileDisconnecting = requests.filter((item) => item.method === 'PUT').length;
     await api.publishActiveContext({ silent: true });
-    await vscode.workspace.getConfiguration('aiZhagan', folderA.uri).update('autoSync', true, vscode.ConfigurationTarget.WorkspaceFolder);
+    await vscode.workspace.getConfiguration('porthole', folderA.uri).update('autoSync', true, vscode.ConfigurationTarget.WorkspaceFolder);
     const editorDuringDisconnect = vscode.window.activeTextEditor;
     await editorDuringDisconnect.edit((edit) => edit.insert(new vscode.Position(0, 0), 'blocked '));
     await wait(300);
@@ -208,13 +287,22 @@ async function run() {
     assert.equal(serverSessions.size, 0);
     assert.equal(await api.getStoredToken(folderA), undefined);
     assert.equal(await api.getStoredToken(folderB), undefined);
-    const additional = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-selected-folder-'));
+    const additional = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-selected-folder-'));
     try {
       const selectedFolder = await api.workspaceFolderForPath(additional);
       assert.equal(path.resolve(selectedFolder.uri.fsPath).toLowerCase(), path.resolve(additional).toLowerCase());
       assert.equal(vscode.workspace.workspaceFolders.length, 3);
       vscode.workspace.updateWorkspaceFolders(selectedFolder.index, 1);
     } finally { fs.rmSync(additional, { recursive: true, force: true }); }
-  } finally { await new Promise((resolve) => server.close(resolve)); }
+    console.log('Extension Host context and review checks passed; starting isolated reset checks');
+    if (process.env.PORTHOLE_TEST_RESET_RUNTIME === '1') await runInitialReset(api, folderA, folderB);
+    else console.log('Frozen runtime reset: deferred to packaged VSIX acceptance (no source runtime bundle)');
+  } catch (error) {
+    console.error(error);
+    throw error;
+  } finally {
+    for (const gate of activeGates) gate.release.resolve();
+    await new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); });
+  }
 }
 module.exports = { run };

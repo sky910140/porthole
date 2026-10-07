@@ -26,7 +26,7 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install -r requirements-windows.lock
           .\.venv\Scripts\python.exe -m pip install -e . --no-deps
-          .\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
+          .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
           npm ci
           npm --prefix extensions/vscode ci
           npx playwright install chromium --only-shell
@@ -37,31 +37,36 @@ jobs:
           npm --prefix extensions/vscode run test:integration
           npm run test:e2e
           node tests/e2e/changes.cjs
+          node tests/e2e/connection-wizard.cjs
+          node tests/e2e/initial-reset.cjs
+          node tests/e2e/scope-preview.cjs
       - name: Build unpublished artifacts
         shell: pwsh
         run: |
           .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
           .\scripts\package-extension.ps1
-          .\.venv\Scripts\python.exe scripts\verify-vsix.py extensions\vscode\ai-zhagan-context-0.4.0.vsix
-          .\.venv\Scripts\python.exe scripts\verify-web-migration.py artifacts\runtime\dist\ai-zhagan\ai-zhagan.exe
+          $candidateVersion = (Get-Content extensions\vscode\package.json -Raw | ConvertFrom-Json).version
+          .\.venv\Scripts\python.exe scripts\verify-vsix.py "extensions\vscode\porthole-$candidateVersion.vsix"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime and Extension Host acceptance failed' }
+          .\.venv\Scripts\python.exe scripts\verify-web-migration.py artifacts\runtime\dist\porthole\porthole.exe
           $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
           $vsix = Get-ChildItem extensions\vscode\*.vsix | Select-Object -First 1
-          $runtime = 'artifacts\runtime\ai-zhagan-windows-x64.zip'
+          $runtime = 'artifacts\runtime\porthole-windows-x64.zip'
           foreach ($file in @($wheel.FullName, $vsix.FullName, $runtime)) {
             .\.venv\Scripts\python.exe scripts\check_release_contents.py $file
             if ($LASTEXITCODE -ne 0) { throw "Release contents rejected: $file" }
           }
           Copy-Item requirements-windows.lock dist\dependencies.txt
-          Add-Content dist\dependencies.txt 'pyinstaller==6.22.3'
+          Add-Content dist\dependencies.txt (Get-Content requirements-build.txt)
           .\.venv\Scripts\python.exe scripts\candidate_manifest.py $wheel.FullName $vsix.FullName $runtime
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-zhagan-unpublished-windows-candidate
+          name: porthole-unpublished-windows-candidate
           path: |
             dist/*.whl
             dist/candidate-manifest.json
             dist/dependencies.txt
             extensions/vscode/*.vsix
-            artifacts/runtime/ai-zhagan-windows-x64.zip
+            artifacts/runtime/porthole-windows-x64.zip
             artifacts/runtime/runtime-manifest.json
           if-no-files-found: error

@@ -23,7 +23,7 @@ body:
   - type: input
     id: versions
     attributes:
-      label: AI Zhagan、VS Code 与系统版本
+      label: Porthole、VS Code 与系统版本
     validations:
       required: true
   - type: checkboxes

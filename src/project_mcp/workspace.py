@@ -12,12 +12,26 @@ from .policy import ProjectPolicy, sensitive_path
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_SCAN_FILES = 10_000
+MAX_SCOPE_PREVIEW_FILES = 200
 MAX_LINE_LENGTH = 4_000
 MAX_SEARCH_BYTES = 32 * 1024 * 1024
 MAX_SEARCH_SECONDS = 3.0
 MAX_BATCH_READ_BYTES = 2 * 1024 * 1024
 
 _DEVICE_NAMES = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+_UNSUPPORTED_BINARY_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".xls", ".ppt", ".pptx", ".png", ".jpg",
+    ".jpeg", ".gif", ".webp", ".zip", ".7z", ".rar", ".exe", ".dll",
+}
+
+
+def read_method(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".csv", ".xlsx"}:
+        return "table"
+    if suffix in _UNSUPPORTED_BINARY_EXTENSIONS:
+        return "unsupported"
+    return "text_candidate"
 
 
 def is_excluded_relative(path: str | PurePosixPath) -> bool:
@@ -192,7 +206,8 @@ class Workspace:
             if len(files) >= limit:
                 has_more = True
                 break
-            files.append({"path": file_path.relative_to(self.root).as_posix(), "size": size})
+            files.append({"path": file_path.relative_to(self.root).as_posix(),
+                          "size": size, "read_as": read_method(file_path)})
             eligible += 1
         relative = base.relative_to(self.root).as_posix() or "."
         scan_limited = scan_truncated[0]
@@ -252,6 +267,19 @@ class Workspace:
             "truncation_reason": reason,
             "truncated": line_range_limited or line_length_limited,
         }
+
+    def read_table(
+        self, path: str, sheet: str | None = None, start_row: int = 1,
+        limit: int = 50, max_columns: int = 20,
+    ) -> dict[str, object]:
+        from .table_read import read_table
+
+        file_path = self.resolve_file(path)
+        return read_table(
+            file_path, project_id=self.project_id,
+            relative_path=file_path.relative_to(self.root).as_posix(),
+            sheet=sheet, start_row=start_row, limit=limit, max_columns=max_columns,
+        )
 
     def read_files(self, requests: list[dict]) -> dict[str, object]:
         if not isinstance(requests, list) or not 1 <= len(requests) <= 10:
@@ -343,9 +371,13 @@ class Workspace:
         }
 
     def preview_scope(self) -> dict[str, object]:
+        if self.policy.paused:
+            raise PermissionError("project access is paused")
         accessible = 0
         scanned = 0
         complete = True
+        truncation_reason = None
+        files: list[dict[str, object]] = []
         excluded: dict[str, int] = {}
         stack = [self.root]
         while stack:
@@ -354,10 +386,13 @@ class Workspace:
                 entries = list(os.scandir(directory))
             except (OSError, PermissionError):
                 excluded["unavailable"] = excluded.get("unavailable", 0) + 1
+                complete = False
+                truncation_reason = "unavailable"
                 continue
             for entry in entries:
                 if scanned >= MAX_SCAN_FILES:
                     complete = False
+                    truncation_reason = "scan_limit"
                     stack.clear()
                     break
                 scanned += 1
@@ -377,25 +412,36 @@ class Workspace:
                         reason = "link_or_reparse"
                 if reason:
                     excluded[reason] = excluded.get(reason, 0) + 1
+                    if reason == "unavailable":
+                        complete = False
+                        truncation_reason = "unavailable"
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(Path(entry.path))
                 elif entry.is_file(follow_symlinks=False):
                     try:
-                        if entry.stat(follow_symlinks=False).st_size > MAX_FILE_BYTES:
+                        size = entry.stat(follow_symlinks=False).st_size
+                        if size > MAX_FILE_BYTES:
                             excluded["file_too_large"] = excluded.get("file_too_large", 0) + 1
                         else:
                             accessible += 1
+                            if len(files) < MAX_SCOPE_PREVIEW_FILES:
+                                files.append({"path": relative, "size": size,
+                                              "read_as": read_method(Path(relative))})
                     except OSError:
                         excluded["unavailable"] = excluded.get("unavailable", 0) + 1
+                        complete = False
+                        truncation_reason = "unavailable"
         return {
             "project_id": self.project_id,
             "policy_version": self.policy.version,
             "accessible_files": accessible,
+            "files": sorted(files, key=lambda item: str(item["path"]).casefold()),
+            "files_truncated": accessible > len(files),
             "excluded_by_reason": excluded,
             "entries_scanned": scanned,
             "scan_complete": complete,
-            "truncation_reason": None if complete else "scan_limit",
+            "truncation_reason": truncation_reason,
         }
 
     def git_status(self) -> dict[str, object]:

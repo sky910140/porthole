@@ -51,7 +51,7 @@ def replace_once(root: Path, crash_point: str) -> dict[str, str]:
 
 def main() -> int:
     results = []
-    with tempfile.TemporaryDirectory(prefix="ai-zhagan-write-probe-") as raw:
+    with tempfile.TemporaryDirectory(prefix="porthole-write-probe-") as raw:
         base = Path(raw)
         for crash_point in ("prepared", "replaced", "complete"):
             case = base / crash_point

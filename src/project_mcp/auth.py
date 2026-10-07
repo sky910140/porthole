@@ -15,7 +15,7 @@ from keyring.errors import PasswordDeleteError
 
 def _vault_service(state_dir):
     identity = hashlib.sha256(str(state_dir.resolve()).encode("utf-8")).hexdigest()
-    return f"AI Zhagan GitHub OAuth {identity}"
+    return f"Porthole GitHub OAuth {identity}"
 
 
 def load_github_credentials(state_dir):

@@ -92,7 +92,7 @@ function buildContextPayload(input) {
 class ContextClient {
   constructor(serviceUrl, token, options = {}) {
     this.serviceUrl = normalizeServiceUrl(serviceUrl, options);
-    if (!token) throw new Error('缺少访问令牌，请先运行“AI Zhagan: 配置连接”。');
+    if (!token) throw new Error('缺少访问令牌，请先运行“舷窗: 配置连接”。');
     this.token = token;
   }
 

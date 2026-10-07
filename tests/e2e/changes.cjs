@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
 const python = process.env.PYTHON || path.join(root, '.venv', 'Scripts', 'python.exe');
-const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-zhagan-change-e2e-'));
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'porthole-change-e2e-'));
 const config = path.join(folder, 'config.json');
 const helper = path.join(root, 'tests', 'e2e', 'change_client.py');
 
@@ -101,7 +101,7 @@ function freePort() {
         'import hashlib,keyring,sys',
         'from pathlib import Path',
         'identity=hashlib.sha256(str(Path(sys.argv[1]).resolve()).encode()).hexdigest()',
-        'keyring.delete_password("AI Zhagan protected content", identity)',
+        'keyring.delete_password("Porthole protected content", identity)',
       ].join(';'), config]);
     } catch { /* Best effort test credential cleanup. */ }
     fs.rmSync(folder, { recursive: true, force: true });

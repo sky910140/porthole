@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -48,13 +51,19 @@ jobs:
         run: |
           npm run test:e2e
           node tests/e2e/changes.cjs
+          node tests/e2e/connection-wizard.cjs
+          node tests/e2e/initial-reset.cjs
+          node tests/e2e/scope-preview.cjs
       - name: Build and inspect release contents
         if: matrix.python == '3.12' && matrix.vscode == '1.138.0'
         shell: pwsh
         run: |
+          .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
           .\.venv\Scripts\python.exe -m pip wheel . --no-deps -w dist
           npm --prefix extensions/vscode run package
           $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
           $vsix = Get-ChildItem extensions\vscode\*.vsix | Select-Object -First 1
           .\.venv\Scripts\python.exe scripts\check_release_contents.py $wheel.FullName
           .\.venv\Scripts\python.exe scripts\check_release_contents.py $vsix.FullName
+          .\.venv\Scripts\python.exe scripts\verify-vsix.py $vsix.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime and Extension Host acceptance failed' }

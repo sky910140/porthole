@@ -26,6 +26,6 @@ test('does not request a downloaded version when an executable is configured', (
 test('can exercise extracted VSIX code while retaining source test fixtures', () => {
   const fallback = 'D:\\source-extension';
   assert.equal(resolveExtensionDevelopmentPath({}, fallback), fallback);
-  assert.equal(resolveExtensionDevelopmentPath({ AI_ZHAGAN_TEST_EXTENSION_PATH: 'D:\\vsix-extension' }, fallback),
+  assert.equal(resolveExtensionDevelopmentPath({ PORTHOLE_TEST_EXTENSION_PATH: 'D:\\vsix-extension' }, fallback),
     'D:\\vsix-extension');
 });

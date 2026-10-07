@@ -1,8 +1,8 @@
-param([switch]$SkipRuntimeBuild)
+param([switch]$SkipRuntimeBuild, [string]$TunnelArchive)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $extensionRoot = Join-Path $repoRoot 'extensions\vscode'
-$runtimeRoot = Join-Path $repoRoot 'artifacts\runtime\dist\ai-zhagan'
+$runtimeRoot = Join-Path $repoRoot 'artifacts\runtime\dist\porthole'
 $bundleRoot = Join-Path $extensionRoot 'runtime-bundle'
 $payloadRoot = Join-Path $bundleRoot 'payload'
 function Get-FileSha256([string]$FilePath) {
@@ -16,9 +16,14 @@ if (-not $SkipRuntimeBuild) {
   & (Join-Path $PSScriptRoot 'build-runtime.ps1')
   if ($LASTEXITCODE -ne 0) { throw 'Runtime build failed.' }
 }
-if (-not (Test-Path -LiteralPath (Join-Path $runtimeRoot 'ai-zhagan.exe'))) {
+if (-not (Test-Path -LiteralPath (Join-Path $runtimeRoot 'porthole.exe'))) {
   throw 'Build the Windows runtime before packaging the extension.'
 }
+
+$tunnelScript = Join-Path $PSScriptRoot 'bundle-tunnel.cjs'
+if ($TunnelArchive) { & node $tunnelScript $TunnelArchive }
+else { & node $tunnelScript }
+if ($LASTEXITCODE -ne 0) { throw 'Verified official tunnel bundle is required for packaging.' }
 
 $extensionFull = [IO.Path]::GetFullPath($extensionRoot).TrimEnd('\')
 $bundleFull = [IO.Path]::GetFullPath($bundleRoot).TrimEnd('\')
@@ -56,7 +61,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'VSIX packaging failed.' }
 } finally { Pop-Location }
 
-$vsix = Join-Path $extensionRoot ("ai-zhagan-context-{0}.vsix" -f $package.version)
+$vsix = Join-Path $extensionRoot ("porthole-{0}.vsix" -f $package.version)
 if (-not (Test-Path -LiteralPath $vsix)) { throw 'VSIX was not created.' }
 Write-Output (ConvertTo-Json ([ordered]@{
   vsix = $vsix

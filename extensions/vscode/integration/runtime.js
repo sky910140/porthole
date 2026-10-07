@@ -12,7 +12,7 @@ function resolveTestRuntime(environment = process.env) {
 }
 
 function resolveExtensionDevelopmentPath(environment, fallback) {
-  const configured = environment.AI_ZHAGAN_TEST_EXTENSION_PATH;
+  const configured = environment.PORTHOLE_TEST_EXTENSION_PATH;
   return configured && configured.trim() ? configured.trim() : fallback;
 }
 

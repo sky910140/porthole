@@ -59,7 +59,12 @@ def test_admin_project_registration_persists_and_disables_removed_context(tmp_pa
         saved = json.loads(config_path.read_text())["projects"][1]
         assert saved["mode"] == "propose"
         assert saved["share_editor_buffers"] is True
+        assert c.patch("/api/projects/second", json={"name": "工程资料"}).status_code == 200
+        assert c.patch("/api/projects/second", json={"name": " "}).status_code == 400
         status = c.get("/api/status").json()["projects"][1]
+        assert status["name"] == "工程资料"
+        assert status["id"] == "second"
+        assert status["root"] == str(tmp_path)
         assert status["apply_local_enabled"] is False
         assert c.delete("/api/projects/second").status_code == 200
         assert [p["id"] for p in c.get("/api/status").json()["projects"]] == ["demo"]
@@ -76,6 +81,8 @@ def test_admin_scope_preview_is_authenticated_and_bounded_to_a_registered_projec
         assert response.status_code == 200
         assert response.json()["project_id"] == "demo"
         assert response.json()["accessible_files"] >= 1
+        assert any(item["path"] == "main.py" for item in response.json()["files"])
+        assert response.json()["files_truncated"] is False
         assert c.get("/api/projects/unknown/scope", headers=headers).status_code == 400
 
 
@@ -98,6 +105,7 @@ async def test_real_mcp_client_tools_read_saved_and_editor_sources(tmp_path):
 
     from project_mcp.server import Runtime, create_mcp
     s = settings(tmp_path)
+    (tmp_path / "estimate.csv").write_text("name,amount\ncable,2\n", encoding="utf-8")
     runtime = Runtime(s)
     runtime.contexts.put(runtime.workspace("demo"), {
         "project_id":"demo", "session_id":"one", "path":"main.py", "version":1, "text":"unsaved"
@@ -105,7 +113,7 @@ async def test_real_mcp_client_tools_read_saved_and_editor_sources(tmp_path):
     async with Client(create_mcp(runtime)) as client:
         names = {t.name for t in await client.list_tools()}
         assert {
-            "read_file", "read_files", "preview_scope", "search_code", "git_diff",
+            "read_file", "read_files", "read_table", "preview_scope", "search_code", "git_diff",
             "get_editor_context",
         } <= names
         r = await client.call_tool("read_file", {"project_id":"demo", "path":"main.py"})
@@ -114,6 +122,8 @@ async def test_real_mcp_client_tools_read_saved_and_editor_sources(tmp_path):
             "project_id": "demo", "requests": [{"path": "main.py"}],
         })
         assert r.data["results"][0]["ok"] is True
+        r = await client.call_tool("read_table", {"project_id": "demo", "path": "estimate.csv"})
+        assert r.data["rows"][1]["cells"] == ["cable", "2"]
         r = await client.call_tool("preview_scope", {"project_id": "demo"})
         assert r.data["scan_complete"] is True
         r = await client.call_tool("get_editor_context", {"project_id":"demo", "session_id":"one"})
