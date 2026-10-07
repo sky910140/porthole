@@ -26,6 +26,8 @@ async function main() {
     launchArgs: [
       path.join(workspaceDir, 'integration.code-workspace'),
       '--disable-extensions',
+      // Keep test credentials isolated from native storage and its asynchronous flushes.
+      '--use-inmemory-secretstorage',
       `--user-data-dir=${userDataDir}`,
       `--extensions-dir=${extensionsDir}`,
       '--skip-welcome',

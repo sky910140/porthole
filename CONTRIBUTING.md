@@ -30,6 +30,8 @@ node tests/e2e/scope-preview.cjs
 
 测试使用隔离配置，不需要公网域名、GitHub OAuth 或真实 AI 账号。本机夹具不能代替真实连接验收；不要把实际密钥、日志和本机配置提交到仓库。
 
+Extension Host 测试通过 VS Code 的 `--use-inmemory-secretstorage` 保存临时凭据，验证配对、断开与重置的调用逻辑，不验证 VS Code 原生凭据的跨进程持久化。冻结服务的 Windows 凭据存储另用 `scripts/verify-vault-runtime.py` 验证。
+
 ## 源码结构
 
 | 目录 | 用途 |
