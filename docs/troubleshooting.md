@@ -4,6 +4,7 @@
 
 | 看到的情况 | 下一步 |
 |---|---|
+| 打开首页提示 `command 'porthole.home' not found` | 等待 VSIX 安装完成，按 `Ctrl+Shift+P` 运行 **Developer: Reload Window / 开发人员: 重新加载窗口**，再打开首页。若仍报错，在扩展页搜索 `@id:sky910140.porthole`，确认扩展已安装且已启用；运行 **Developer: Show Logs… / 开发人员: 显示日志…**，选择 **Extension Host / 扩展宿主**，查看 Porthole 加载错误。不要为此恢复初始状态或重填凭据。 |
 | 安装 0.9.1 后仍显示 AI Zhagan，或“扩展附带 0.8.x” | 旧扩展仍在运行。按[旧版升级步骤](beginner-manual.md#从旧内部版本升级)停止旧服务、卸载旧扩展、重新加载 VS Code，然后运行“舷窗: 打开首页”。Porthole 使用独立扩展标识，不会覆盖早期内部版。 |
 | 本机服务未启动、端口占用 | 在首页点击“启动服务”或“检查连接”。端口冲突时先确认占用进程，不要结束不相关服务。开发者可运行 `scripts/status.ps1` 或查看本机状态目录的 `server.log`。 |
 | 找不到 ChatGPT 的 Tunnel 选项 | 确认账号可使用开发者模式及 Secure MCP Tunnel，并把 Tunnel 关联到目标 ChatGPT 工作区；创建者需要 Tunnels Read + Use。该权限由 OpenAI 账号侧决定，扩展不能自动开通。可先只用本机功能，或使用“高级：公网连接”。 |
@@ -42,3 +43,5 @@
 | 已完成，但 ChatGPT 中仍有旧应用 | 本机授权清除与外部账号撤销是两件操作。按 [恢复说明](../extensions/vscode/RESET.md) 在相应账号页面处理；完成页不会声称已撤销云端连接。 |
 
 诊断或 Issue 请勿附带真实令牌、OAuth 返回、本地绝对路径或未经处理的项目代码。安全问题按 [安全策略](../SECURITY.md) 私密报告。
+
+重新安装同一版本时，VS Code 会替换安装目录。如果扩展宿主在文件替换期间尝试加载，可能出现 `Cannot find module …/extension.js`，随后打开首页提示命令不存在。等待安装完成后重新加载窗口，可以重新尝试加载；若错误持续存在，需要根据扩展宿主日志进一步排查。
